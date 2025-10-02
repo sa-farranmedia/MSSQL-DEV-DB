@@ -1,4 +1,4 @@
-# DEV Legacy WEPABB Infrastructure - Operator Guide
+# DEV Legacy WEBAPP Infrastructure - Operator Guide
 
 ## Overview
 
