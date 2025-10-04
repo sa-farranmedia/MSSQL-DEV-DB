@@ -1,22 +1,38 @@
-project_name = "legacy-wepabb"
+project_name = "legacy-webapp"
 env          = "dev"
 region       = "us-east-2"
 
+# VPC Configuration
 vpc_cidr             = "10.42.0.0/16"
 private_subnet_cidrs = ["10.42.0.0/20", "10.42.16.0/20", "10.42.32.0/20"]
 public_subnet_cidrs  = ["10.42.240.0/24", "10.42.241.0/24"]
 
-additional_ip_strategy = "secondary_ips" # or "multi_eni"
-static_ips             = null            # or ["10.42.0.50", "10.42.0.51", "10.42.0.52", "10.42.0.53", "10.42.0.54"]
+# EC2 IP Configuration (6 total: 1 primary + 5 secondary)
+additional_ip_strategy = "secondary_ips"
+static_ips = [
+  "10.42.0.60",
+  "10.42.0.61",
+  "10.42.0.62",
+  "10.42.0.63",
+  "10.42.0.64",
+  "10.42.0.65"
+]
 
-enable_scheduler = true
-enable_rds_custom = false # Set to true when CEV/custom AMI is ready
+# RDS Custom Configuration
+# IMPORTANT: Set enable_rds_custom to true AFTER CEV is registered
+enable_rds_custom = true
+enable_scheduler  = true
 
-ssm_allowed_iam_usernames = ["alice", "bob"]
+# SSM Access Control
+ssm_allowed_iam_usernames = ["dev-brandon-leal"]
 
+# S3 Media Bucket
 s3_media_bucket = "dev-sqlserver-supportfiles-backups-and-iso-files"
-sql_iso_key     = "media/SERVER_EVAL_x64FRE_en-us.iso"
+sql_iso_key     = "media/SQLServer2022-x64-ENU-Dev.iso"
 sql_cu_key      = "media/sqlserver2022-kb5041321-x64_1b40129fb51df67f28feb2a1ea139044c611b93f.exe"
 
+# RDS Instance Configuration
 rds_instance_class    = "db.m5.xlarge"
-rds_allocated_storage = 100
+rds_allocated_storage = 900
+
+

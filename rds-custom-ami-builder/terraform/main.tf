@@ -11,27 +11,35 @@ terraform {
 
 provider "aws" {
   region = var.region
+}
 
-  default_tags {
-    tags = {
-      Name    = "${var.env}-${var.project_name}-ami-builder"
-      env     = var.env
-      project = var.project_name
-      purpose = "rds-custom-ami-builder"
-    }
+# Data: Latest Windows Server 2019 AMI (RDS Custom compatible)
+data "aws_ami" "windows_2019" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["Windows_Server-2019-English-Full-Base-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
   }
 }
 
-# Data source: Latest Windows Server 2019 (RDS Custom requires 2019 or 2022)
-data "aws_ssm_parameter" "windows_ami" {
-  name = "/aws/service/ami-windows-latest/Windows_Server-2019-English-Full-Base"
+# Data: Get SA password from SSM Parameter Store
+data "aws_ssm_parameter" "sa_password" {
+  name            = var.sa_password_ssm_path
+  with_decryption = true
 }
 
-# Security Group for AMI Builder
-resource "aws_security_group" "ami_builder" {
-  name_prefix = "${var.env}-${var.project_name}-ami-builder-"
-  description = "Security group for RDS Custom AMI builder"
-  vpc_id      = var.vpc_id
+# Security Group for Builder Instance
+resource "aws_security_group" "builder" {
+  name        = "${var.env}-${var.project_name}-ami-builder-sg"
+  description = "Security group for SQL Server AMI builder instance"
+  vpc_id      = data.aws_vpc.default.id
 
   egress {
     description = "Allow all outbound"
@@ -42,13 +50,27 @@ resource "aws_security_group" "ami_builder" {
   }
 
   tags = {
-    Name = "${var.env}-${var.project_name}-ami-builder-sg"
+    Name    = "${var.env}-${var.project_name}-ami-builder-sg"
+    env     = var.env
+    project = var.project_name
   }
 }
 
-# IAM Role for AMI Builder
-resource "aws_iam_role" "ami_builder" {
-  name_prefix = "${var.env}-${var.project_name}-ami-builder-"
+# Use default VPC for builder (temporary instance)
+data "aws_vpc" "default" {
+  default = true
+}
+
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+# IAM Role for Builder Instance
+resource "aws_iam_role" "builder" {
+  name = "${var.env}-${var.project_name}-ami-builder-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -64,27 +86,32 @@ resource "aws_iam_role" "ami_builder" {
   })
 
   tags = {
-    Name = "${var.env}-${var.project_name}-ami-builder-role"
+    Name    = "${var.env}-${var.project_name}-ami-builder-role"
+    env     = var.env
+    project = var.project_name
   }
 }
 
-# IAM Policy for AMI Builder
-resource "aws_iam_role_policy" "ami_builder" {
-  name_prefix = "${var.env}-${var.project_name}-ami-builder-"
-  role        = aws_iam_role.ami_builder.id
+# Attach SSM policy
+resource "aws_iam_role_policy_attachment" "builder_ssm" {
+  role       = aws_iam_role.builder.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# Attach CloudWatch policy
+resource "aws_iam_role_policy_attachment" "builder_cloudwatch" {
+  role       = aws_iam_role.builder.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+# Custom policy for S3 and SSM Parameter Store
+resource "aws_iam_role_policy" "builder_custom" {
+  name = "${var.env}-${var.project_name}-ami-builder-custom-policy"
+  role = aws_iam_role.builder.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:UpdateInstanceInformation",
-          "ssmmessages:*",
-          "ec2messages:*"
-        ]
-        Resource = "*"
-      },
       {
         Effect = "Allow"
         Action = [
@@ -100,130 +127,81 @@ resource "aws_iam_role_policy" "ami_builder" {
         Effect = "Allow"
         Action = [
           "ssm:GetParameter",
-          "ssm:GetParameters",
-          "ssm:PutParameter"
+          "ssm:GetParameters"
         ]
-        Resource = "arn:aws:ssm:${var.region}:*:parameter/${var.env}/${var.project_name}/*"
+        Resource = "arn:aws:ssm:${var.region}:*:parameter${var.sa_password_ssm_path}"
       },
       {
         Effect = "Allow"
         Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents",
-          "logs:DescribeLogStreams"
+          "kms:Decrypt"
         ]
-        Resource = "arn:aws:logs:${var.region}:*:log-group:/aws/rds-custom/ami-builder*"
+        Resource = "*"
       }
     ]
   })
 }
 
-# Attach SSM policy
-resource "aws_iam_role_policy_attachment" "ssm_core" {
-  role       = aws_iam_role.ami_builder.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
 # Instance Profile
-resource "aws_iam_instance_profile" "ami_builder" {
-  name_prefix = "${var.env}-${var.project_name}-ami-builder-"
-  role        = aws_iam_role.ami_builder.name
+resource "aws_iam_instance_profile" "builder" {
+  name = "${var.env}-${var.project_name}-ami-builder-profile"
+  role = aws_iam_role.builder.name
 
   tags = {
-    Name = "${var.env}-${var.project_name}-ami-builder-profile"
+    Name    = "${var.env}-${var.project_name}-ami-builder-profile"
+    env     = var.env
+    project = var.project_name
   }
 }
 
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "ami_builder" {
-  name              = "/aws/rds-custom/ami-builder"
-  retention_in_days = 7
+# Builder EC2 Instance
+resource "aws_instance" "builder" {
+  ami                    = data.aws_ami.windows_2019.id
+  instance_type          = "m5.xlarge"
+  subnet_id              = data.aws_subnets.default.ids[0]
+  vpc_security_group_ids = [aws_security_group.builder.id]
+  iam_instance_profile   = aws_iam_instance_profile.builder.name
 
-  tags = {
-    Name = "${var.env}-${var.project_name}-ami-builder-logs"
-  }
-}
+  # No public IP needed with SSM
+  associate_public_ip_address = false
 
-# Generate SA password
-resource "random_password" "sa_password" {
-  length  = 32
-  special = true
-}
-
-# Store SA password in SSM
-resource "aws_ssm_parameter" "sa_password" {
-  name        = "/${var.env}/${var.project_name}/sql-server/sa-password"
-  description = "SQL Server SA password for RDS Custom AMI"
-  type        = "SecureString"
-  value       = random_password.sa_password.result
-
-  tags = {
-    Name = "${var.env}-${var.project_name}-sa-password"
-  }
-}
-
-# AMI Builder Instance
-resource "aws_instance" "ami_builder" {
-  ami                    = data.aws_ssm_parameter.windows_ami.value
-  instance_type          = var.builder_instance_type
-  subnet_id              = var.subnet_id
-  vpc_security_group_ids = [aws_security_group.ami_builder.id]
-  iam_instance_profile   = aws_iam_instance_profile.ami_builder.name
-
+  # Larger root volume for SQL Server
   root_block_device {
     volume_type           = "gp3"
-    volume_size           = var.builder_volume_size
+    volume_size           = 150
     encrypted             = true
     delete_on_termination = true
   }
 
-  metadata_options {
-    http_tokens   = "required"
-    http_endpoint = "enabled"
-  }
-
   user_data = templatefile("${path.module}/install-sql-server.ps1", {
-    region               = var.region
-    s3_media_bucket      = var.s3_media_bucket
-    sql_iso_key          = var.sql_iso_key
-    sql_cu_key           = var.sql_cu_key
-    sql_version          = var.sql_version
-    sql_edition          = var.sql_edition
-    sql_instance_name    = var.sql_instance_name
-    sql_collation        = var.sql_collation
-    sa_password_param    = aws_ssm_parameter.sa_password.name
-    log_group_name       = aws_cloudwatch_log_group.ami_builder.name
-    env                  = var.env
-    project_name         = var.project_name
+    s3_bucket   = var.s3_media_bucket
+    sql_iso_key = var.sql_iso_key
+    sql_cu_key  = var.sql_cu_key
+    sa_password = data.aws_ssm_parameter.sa_password.value
   })
 
   tags = {
-    Name = "${var.env}-${var.project_name}-ami-builder"
+    Name    = "${var.env}-${var.project_name}-ami-builder"
+    env     = var.env
+    project = var.project_name
+    purpose = "RDS Custom AMI Builder"
   }
 
   lifecycle {
-    ignore_changes = [ami]
+    ignore_changes = [user_data]
   }
 }
 
-# Outputs
-output "builder_instance_id" {
-  description = "AMI Builder instance ID"
-  value       = aws_instance.ami_builder.id
+# CloudWatch Log Group for UserData logs
+resource "aws_cloudwatch_log_group" "builder" {
+  name              = "/aws/ec2/${var.env}-${var.project_name}-ami-builder"
+  retention_in_days = 7
+
+  tags = {
+    Name    = "${var.env}-${var.project_name}-ami-builder-logs"
+    env     = var.env
+    project = var.project_name
+  }
 }
 
-output "builder_private_ip" {
-  description = "AMI Builder private IP"
-  value       = aws_instance.ami_builder.private_ip
-}
 
-output "sa_password_ssm_parameter" {
-  description = "SSM Parameter Store path for SA password"
-  value       = aws_ssm_parameter.sa_password.name
-}
-
-output "ssm_connect_command" {
-  description = "Command to connect via SSM"
-  value       = "aws ssm start-session --target ${aws_instance.ami_builder.id} --region ${var.region}"
-}

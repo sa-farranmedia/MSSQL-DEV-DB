@@ -1,33 +1,21 @@
+# VPC
 resource "aws_vpc" "main" {
   cidr_block           = var.vpc_cidr
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-vpc"
-  }
+  })
 }
 
 # Internet Gateway
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-igw"
-  }
-}
-
-# Public Subnets (2 AZs)
-resource "aws_subnet" "public" {
-  count                   = length(var.public_subnet_cidrs)
-  vpc_id                  = aws_vpc.main.id
-  cidr_block              = var.public_subnet_cidrs[count.index]
-  availability_zone       = var.azs[count.index]
-  map_public_ip_on_launch = true
-
-  tags = {
-    Name = "${var.env}-${var.project_name}-public-${var.azs[count.index]}"
-  }
+  })
 }
 
 # Private Subnets (3 AZs)
@@ -35,37 +23,52 @@ resource "aws_subnet" "private" {
   count             = length(var.private_subnet_cidrs)
   vpc_id            = aws_vpc.main.id
   cidr_block        = var.private_subnet_cidrs[count.index]
-  availability_zone = var.azs[count.index]
+  availability_zone = var.availability_zones[count.index]
 
-  tags = {
-    Name = "${var.env}-${var.project_name}-private-${var.azs[count.index]}"
-  }
+  tags = merge(var.tags, {
+    Name = "${var.env}-${var.project_name}-private-${count.index + 1}"
+    Tier = "private"
+  })
+}
+
+# Public Subnets (2 AZs)
+resource "aws_subnet" "public" {
+  count                   = length(var.public_subnet_cidrs)
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = var.public_subnet_cidrs[count.index]
+  availability_zone       = var.availability_zones[count.index]
+  map_public_ip_on_launch = false
+
+  tags = merge(var.tags, {
+    Name = "${var.env}-${var.project_name}-public-${count.index + 1}"
+    Tier = "public"
+  })
 }
 
 # Elastic IP for NAT Gateway
 resource "aws_eip" "nat" {
   domain = "vpc"
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-nat-eip"
-  }
+  })
 
   depends_on = [aws_internet_gateway.main]
 }
 
-# NAT Gateway (single AZ for DEV cost optimization)
+# NAT Gateway (Single AZ for DEV cost savings - SPOF)
 resource "aws_nat_gateway" "main" {
   allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.public[0].id
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-nat"
-  }
+  })
 
   depends_on = [aws_internet_gateway.main]
 }
 
-# Public Route Table
+# Route Table for Public Subnets
 resource "aws_route_table" "public" {
   vpc_id = aws_vpc.main.id
 
@@ -74,19 +77,19 @@ resource "aws_route_table" "public" {
     gateway_id = aws_internet_gateway.main.id
   }
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-public-rt"
-  }
+  })
 }
 
-# Public Route Table Associations
+# Associate Public Subnets with Public Route Table
 resource "aws_route_table_association" "public" {
   count          = length(aws_subnet.public)
   subnet_id      = aws_subnet.public[count.index].id
   route_table_id = aws_route_table.public.id
 }
 
-# Private Route Table
+# Route Table for Private Subnets
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
 
@@ -95,12 +98,12 @@ resource "aws_route_table" "private" {
     nat_gateway_id = aws_nat_gateway.main.id
   }
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-private-rt"
-  }
+  })
 }
 
-# Private Route Table Associations
+# Associate Private Subnets with Private Route Table
 resource "aws_route_table_association" "private" {
   count          = length(aws_subnet.private)
   subnet_id      = aws_subnet.private[count.index].id
@@ -109,7 +112,7 @@ resource "aws_route_table_association" "private" {
 
 # Security Group for VPC Endpoints
 resource "aws_security_group" "vpc_endpoints" {
-  name_prefix = "${var.env}-${var.project_name}-vpce-"
+  name        = "${var.env}-${var.project_name}-vpce-sg"
   description = "Security group for VPC endpoints"
   vpc_id      = aws_vpc.main.id
 
@@ -129,75 +132,79 @@ resource "aws_security_group" "vpc_endpoints" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-vpce-sg"
-  }
+  })
 }
 
 # VPC Endpoint for SSM
 resource "aws_vpc_endpoint" "ssm" {
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${var.region}.ssm"
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.ssm"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-ssm-vpce"
-  }
+  })
 }
 
 # VPC Endpoint for SSM Messages
 resource "aws_vpc_endpoint" "ssmmessages" {
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${var.region}.ssmmessages"
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.ssmmessages"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-ssmmessages-vpce"
-  }
+  })
 }
 
 # VPC Endpoint for EC2 Messages
 resource "aws_vpc_endpoint" "ec2messages" {
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${var.region}.ec2messages"
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.ec2messages"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-ec2messages-vpce"
-  }
+  })
 }
 
 # VPC Endpoint for CloudWatch Logs
 resource "aws_vpc_endpoint" "logs" {
   vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${var.region}.logs"
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.logs"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.vpc_endpoints.id]
   private_dns_enabled = true
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-logs-vpce"
-  }
+  })
 }
 
-# Gateway VPC Endpoint for S3
+# VPC Endpoint for S3 (Gateway)
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.main.id
-  service_name      = "com.amazonaws.${var.region}.s3"
+  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.private.id]
+  route_table_ids   = concat([aws_route_table.private.id], [aws_route_table.public.id])
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-s3-vpce"
-  }
+  })
 }
+
+data "aws_region" "current" {}
+
+

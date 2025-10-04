@@ -4,7 +4,7 @@ variable "project_name" {
 }
 
 variable "env" {
-  description = "Environment"
+  description = "Environment name"
   type        = string
 }
 
@@ -24,26 +24,32 @@ variable "vpc_cidr" {
 }
 
 variable "private_subnet_ids" {
-  description = "Private subnet IDs"
+  description = "Private subnet IDs for DB subnet group"
   type        = list(string)
 }
 
-variable "enable_scheduler" {
-  description = "Enable RDS scheduler"
-  type        = bool
-}
-
-variable "enable_rds_custom" {
-  description = "Enable RDS Custom provisioning"
-  type        = bool
-}
-
-variable "rds_instance_class" {
+variable "instance_class" {
   description = "RDS instance class"
   type        = string
+  default     = "db.m5.xlarge"
 }
 
-variable "rds_allocated_storage" {
-  description = "RDS allocated storage (GB)"
+variable "allocated_storage" {
+  description = "Allocated storage in GB"
   type        = number
+  default     = 900
 }
+
+variable "enable_scheduler" {
+  description = "Enable automated start/stop scheduler"
+  type        = bool
+  default     = true
+}
+
+variable "tags" {
+  description = "Common tags"
+  type        = map(string)
+  default     = {}
+}
+
+

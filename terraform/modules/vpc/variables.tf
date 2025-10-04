@@ -4,12 +4,7 @@ variable "project_name" {
 }
 
 variable "env" {
-  description = "Environment"
-  type        = string
-}
-
-variable "region" {
-  description = "AWS region"
+  description = "Environment name"
   type        = string
 }
 
@@ -28,7 +23,15 @@ variable "public_subnet_cidrs" {
   type        = list(string)
 }
 
-variable "azs" {
-  description = "Availability zones"
+variable "availability_zones" {
+  description = "Availability zones to use"
   type        = list(string)
 }
+
+variable "tags" {
+  description = "Common tags"
+  type        = map(string)
+  default     = {}
+}
+
+

@@ -1,421 +1,485 @@
-# DEV Legacy WEBAPP Infrastructure - Developer Guide
+# Developer Guide - Legacy WebApp DEV Environment
+
+This guide covers how to connect to and use the DEV infrastructure for development work.
 
 ## Overview
 
-This guide helps developers connect to the Windows Server 2022 EC2 instance and RDS Custom SQL Server using AWS Systems Manager (SSM) port forwarding. No public IPs or bastion hosts are required.
+The DEV environment consists of:
+- **Windows EC2**: SQL Server client tooling (SSMS, .NET, etc.) - **NO SQL engine**
+- **RDS Custom**: SQL Server Developer Edition database
+
+All access is via **AWS Systems Manager Session Manager** (no RDP/SQL ports exposed publicly).
 
 ## Prerequisites
 
-Before connecting, ensure you have:
-
-1. **AWS CLI v2** installed and configured
-   ```bash
-   aws --version  # Should be 2.x
-   ```
-
-2. **AWS Session Manager Plugin** installed
-   - Download: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html
-   - Verify: `session-manager-plugin`
-
-3. **IAM Permissions**: Your AWS user/role needs:
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Effect": "Allow",
-         "Action": [
-           "ssm:StartSession",
-           "ssm:DescribeInstanceInformation",
-           "ssm:TerminateSession"
-         ],
-         "Resource": [
-           "arn:aws:ec2:us-east-2:*:instance/*",
-           "arn:aws:ssm:us-east-2:*:document/AWS-StartPortForwardingSession"
-         ],
-         "Condition": {
-           "StringLike": {
-             "ssm:resourceTag/project": "legacy-wepabb"
-           }
-         }
-       }
-     ]
-   }
-   ```
-
-4. **SQL Server Management Studio (SSMS)** installed locally (for database access)
-   - Download: https://aka.ms/ssmsfullsetup
-
-5. **Get Instance ID**: Retrieve from Terraform outputs
-   ```bash
-   cd terraform
-   export INSTANCE_ID=$(terraform output -raw instance_id)
-   echo $INSTANCE_ID
-   ```
-
-## Connecting to the EC2 Instance
-
-### Method 1: Interactive Shell (PowerShell Session)
-
-Start an interactive PowerShell session on the EC2 instance:
+### Install AWS CLI
 
 ```bash
-aws ssm start-session \
-  --target $INSTANCE_ID \
-  --region us-east-2
-```
+# macOS
+brew install awscli
 
-Once connected, you can run PowerShell commands directly:
-```powershell
-# Check Windows version
-Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion
-
-# Verify .NET installations
-Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP' -Recurse
-
-# Check installed software
-Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* | Select-Object DisplayName, DisplayVersion
-
-# Check NPS service
-Get-Service IAS
-```
-
-Exit session: Type `exit`
-
-### Method 2: Port Forwarding (RDP Access)
-
-Forward local port to RDP (3389) on the instance:
-
-```bash
-aws ssm start-session \
-  --target $INSTANCE_ID \
-  --region us-east-2 \
-  --document-name AWS-StartPortForwardingSession \
-  --parameters "portNumber=3389,localPortNumber=13389"
-```
-
-Keep this terminal open. In another terminal, connect RDP:
-```bash
 # Windows
-mstsc /v:localhost:13389
+# Download from: https://aws.amazon.com/cli/
 
-# Mac (Microsoft Remote Desktop)
-# Open Microsoft Remote Desktop app
-# Add PC: localhost:13389
-# Username: Administrator (get password from AWS console or SSM Parameter)
-
-# Linux
-rdesktop localhost:13389
+# Verify installation
+aws --version
 ```
 
-**Get Windows Password**:
-```bash
-# If you have the EC2 key pair
-aws ec2 get-password-data \
-  --instance-id $INSTANCE_ID \
-  --region us-east-2 \
-  --priv-launch-key /path/to/private-key.pem
-```
-
-## Connecting to RDS Custom SQL Server
-
-### Step 1: Get RDS Endpoint
-
-Retrieve the RDS Custom endpoint from Terraform outputs (when RDS is provisioned):
+### Install Session Manager Plugin
 
 ```bash
-cd terraform
-export RDS_ENDPOINT=$(terraform output -raw rds_endpoint)
-export RDS_PORT=1433
-echo "RDS Endpoint: $RDS_ENDPOINT"
+# macOS
+brew install --cask session-manager-plugin
+
+# Windows
+# Download from: https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html
+
+# Verify installation
+session-manager-plugin
 ```
 
-### Step 2: Start Port Forwarding to RDS
-
-Forward local port to RDS SQL Server port (1433):
+### Configure AWS CLI
 
 ```bash
-aws ssm start-session \
-  --target $INSTANCE_ID \
-  --region us-east-2 \
-  --document-name AWS-StartPortForwardingSessionToRemoteHost \
-  --parameters "{\"portNumber\":[\"1433\"],\"localPortNumber\":[\"11433\"],\"host\":[\"$RDS_ENDPOINT\"]}"
+# Configure default profile
+aws configure
+
+# Or use named profile
+aws configure --profile dev-brandon-leal
+
+# Verify access
+aws sts get-caller-identity
 ```
 
-**Important**: Keep this terminal window open while connected.
+## Connecting to Windows EC2
 
-### Step 3: Connect SSMS to RDS via Port Forward
+### Method 1: Direct SSM Session (Console/PowerShell)
 
-1. Open **SQL Server Management Studio** on your local machine
-
-2. In the "Connect to Server" dialog:
-   - **Server type**: Database Engine
-   - **Server name**: `localhost,11433` (note the comma, not colon)
-   - **Authentication**: SQL Server Authentication
-   - **Login**: `admin` (or your configured RDS master username)
-   - **Password**: Your RDS master password
-
-3. Click **Connect**
-
-You're now connected to RDS Custom SQL Server through the EC2 instance!
-
-### Alternative: Direct Connection (if VPN or VPC peering exists)
-
-If you have network connectivity to the VPC (e.g., VPN, Direct Connect):
-
-```
-Server name: <RDS_ENDPOINT>,1433
-Authentication: SQL Server Authentication
-Login: admin
-Password: <your-password>
-```
-
-## Common Connection Scenarios
-
-### Scenario 1: Quick Database Query via EC2
-
-1. Start SSM session to EC2
-   ```bash
-   aws ssm start-session --target $INSTANCE_ID --region us-east-2
-   ```
-
-2. From PowerShell on EC2, run SQL query:
-   ```powershell
-   # Using SQLCMD (pre-installed)
-   sqlcmd -S $env:RDS_ENDPOINT -U admin -P 'YourPassword' -Q "SELECT @@VERSION"
-   ```
-
-### Scenario 2: File Transfer to EC2
-
-Upload a file using SSM Session Manager:
-
-```bash
-# Create a temporary S3 location
-aws s3 cp myfile.sql s3://dev-sqlserver-supportfiles-backups-and-iso-files/temp/
-
-# In SSM session on EC2:
-Read-S3Object -BucketName dev-sqlserver-supportfiles-backups-and-iso-files -Key temp/myfile.sql -File C:\temp\myfile.sql
-```
-
-### Scenario 3: Debugging Network Connectivity
-
-From SSM session on EC2, test RDS connectivity:
-
-```powershell
-# Test port 1433 connectivity
-Test-NetConnection -ComputerName $env:RDS_ENDPOINT -Port 1433
-
-# Check security group rules
-# (Ensure EC2 security group can reach RDS security group on port 1433)
-
-# DNS resolution
-Resolve-DnsName $env:RDS_ENDPOINT
-```
-
-## Port Forwarding Reference
-
-### AWS SSM Port Forwarding Documents
-
-1. **AWS-StartPortForwardingSession**: Forward to a port on the instance itself
-   - Use for: RDP (3389), custom application ports
-   - Example: RDP access to EC2
-
-2. **AWS-StartPortForwardingSessionToRemoteHost**: Forward to a remote host via the instance
-   - Use for: RDS, other VPC resources not directly SSM-accessible
-   - Example: SQL Server on RDS Custom
-
-### Common Ports
-
-| Service | Port | Local Forward |
-|---------|------|---------------|
-| RDP (EC2) | 3389 | `localPortNumber=13389` |
-| SQL Server (RDS) | 1433 | `localPortNumber=11433` |
-| HTTP (custom app) | 80 | `localPortNumber=8080` |
-| HTTPS (custom app) | 443 | `localPortNumber=8443` |
-
-## Troubleshooting
-
-### SSM Session Won't Start
-
-**Error**: "Target is not connected"
-
-**Causes**:
-- SSM Agent not running on EC2
-- VPC endpoints for SSM not configured
-- Instance profile missing SSM permissions
-- Security group blocking outbound HTTPS (443)
-
-**Fix**:
-1. Check instance status:
-   ```bash
-   aws ssm describe-instance-information --region us-east-2
-   ```
-2. Verify VPC endpoints exist:
-   ```bash
-   aws ec2 describe-vpc-endpoints --region us-east-2 --filters "Name=service-name,Values=com.amazonaws.us-east-2.ssm"
-   ```
-3. Check CloudWatch Logs for SSM agent errors
-
-### Port Forward Connection Refused
-
-**Error**: "Connection refused" on `localhost:11433`
-
-**Causes**:
-- RDS instance stopped or not running
-- Security group blocking port 1433 from EC2
-- RDS endpoint incorrect
-- Port forward session terminated
-
-**Fix**:
-1. Verify RDS running:
-   ```bash
-   aws rds describe-db-instances --region us-east-2 --query 'DBInstances[*].[DBInstanceIdentifier,DBInstanceStatus]'
-   ```
-2. Check RDS security group inbound rule allows TCP/1433 from VPC CIDR or EC2 security group
-3. Ensure port forward session is active (keep terminal open)
-
-### SSMS Connection Timeout
-
-**Error**: "Timeout expired" in SSMS
-
-**Causes**:
-- Incorrect server name format (use comma: `localhost,11433`)
-- Port forward not running
-- Wrong credentials
-
-**Fix**:
-1. Verify port forward syntax: `localhost,11433` (comma, not colon)
-2. Check terminal with port forward is still running
-3. Test with `telnet localhost 11433` (should connect if port forward works)
-
-### "Target Not in VPC" Error
-
-**Error**: "The specified target is not in a VPC"
-
-**Cause**: Trying to use `AWS-StartPortForwardingSessionToRemoteHost` for internet hosts
-
-**Fix**: This document only works for private VPC resources. For internet hosts, use NAT Gateway or proxy.
-
-## Advanced Tips
-
-### Persistent Port Forwarding with AutoSSH
-
-On Linux/Mac, keep port forward alive automatically:
-
-```bash
-# Install autossh
-# Mac: brew install autossh
-# Linux: sudo apt install autossh
-
-# Create wrapper script
-cat > ~/ssm-port-forward-rds.sh << 'EOF'
-#!/bin/bash
-aws ssm start-session \
-  --target $INSTANCE_ID \
-  --region us-east-2 \
-  --document-name AWS-StartPortForwardingSessionToRemoteHost \
-  --parameters '{"portNumber":["1433"],"localPortNumber":["11433"],"host":["'$RDS_ENDPOINT'"]}'
-EOF
-
-chmod +x ~/ssm-port-forward-rds.sh
-
-# Run with autossh (auto-reconnect)
-autossh -M 0 -f ~/ssm-port-forward-rds.sh
-```
-
-### Multi-Session: EC2 + RDS Simultaneously
-
-Open two terminals:
-
-**Terminal 1** (EC2 shell):
-```bash
-aws ssm start-session --target $INSTANCE_ID --region us-east-2
-```
-
-**Terminal 2** (RDS port forward):
-```bash
-aws ssm start-session \
-  --target $INSTANCE_ID \
-  --region us-east-2 \
-  --document-name AWS-StartPortForwardingSessionToRemoteHost \
-  --parameters '{"portNumber":["1433"],"localPortNumber":["11433"],"host":["'$RDS_ENDPOINT'"]}'
-```
-
-Now you can run commands on EC2 while SSMS is connected to RDS.
-
-### Scripting Database Tasks
-
-PowerShell script to run SQL via port forward:
-
-```powershell
-# setup-port-forward-and-query.ps1
-$INSTANCE_ID = (terraform output -raw instance_id)
-$RDS_ENDPOINT = (terraform output -raw rds_endpoint)
-
-# Start port forward in background (PowerShell 7+)
-$portForwardJob = Start-Job -ScriptBlock {
-    aws ssm start-session `
-      --target $using:INSTANCE_ID `
-      --region us-east-2 `
-      --document-name AWS-StartPortForwardingSessionToRemoteHost `
-      --parameters ('{"portNumber":["1433"],"localPortNumber":["11433"],"host":["' + $using:RDS_ENDPOINT + '"]}')
-}
-
-# Wait for port to be ready
-Start-Sleep -Seconds 5
-
-# Run SQL query
-$query = "SELECT @@VERSION"
-Invoke-Sqlcmd -ServerInstance "localhost,11433" -Username admin -Password "YourPassword" -Query $query
-
-# Cleanup
-Stop-Job $portForwardJob
-Remove-Job $portForwardJob
-```
-
-## Security Notes
-
-1. **No Inbound Ports Open**: EC2 has no public IP and no inbound security group rules. All access via SSM.
-2. **IAM Session Permissions**: SSM sessions are audited in CloudTrail. Your IAM username is logged.
-3. **Session Recording**: Enable Session Manager session logging to S3/CloudWatch for compliance.
-4. **MFA Enforcement**: Consider enforcing MFA for SSM session initiation via IAM policy conditions.
-
-## Quick Reference Card
+Start a PowerShell session directly:
 
 ```bash
 # Get instance ID
-export INSTANCE_ID=$(cd terraform && terraform output -raw instance_id)
+INSTANCE_ID=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=dev-legacy-webapp-ec2" \
+  --query 'Reservations[0].Instances[0].InstanceId' \
+  --output text)
 
-# Get RDS endpoint (when provisioned)
-export RDS_ENDPOINT=$(cd terraform && terraform output -raw rds_endpoint)
+# Start session
+aws ssm start-session --target $INSTANCE_ID
+```
 
-# Interactive shell
-aws ssm start-session --target $INSTANCE_ID --region us-east-2
+This opens a PowerShell prompt on the Windows server.
 
-# Port forward: RDP
+### Method 2: RDP via Port Forwarding
+
+For GUI access with RDP:
+
+```bash
+# Get instance ID
+INSTANCE_ID=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=dev-legacy-webapp-ec2" \
+  --query 'Reservations[0].Instances[0].InstanceId' \
+  --output text)
+
+# Start port forward (RDP on local port 13389)
 aws ssm start-session \
   --target $INSTANCE_ID \
-  --region us-east-2 \
+  --document-name AWS-StartPortForwardingSession \
+  --parameters "portNumber=3389,localPortNumber=13389"
+```
+
+**Keep this terminal open**. In another window, connect with RDP client:
+
+```
+Server: localhost:13389
+Username: Administrator
+Password: [Get from SSM Parameter Store - see below]
+```
+
+#### Get Administrator Password
+
+```bash
+# Retrieve password from Parameter Store
+aws ssm get-parameter \
+  --name /dev/legacy-webapp/ec2/admin-password \
+  --with-decryption \
+  --query 'Parameter.Value' \
+  --output text
+```
+
+Or retrieve the Windows password using EC2 key pair:
+
+```bash
+aws ec2 get-password-data \
+  --instance-id $INSTANCE_ID \
+  --priv-launch-key /path/to/keypair.pem
+```
+
+### RDP Clients
+
+**macOS**: Microsoft Remote Desktop (App Store)
+**Windows**: Built-in Remote Desktop Connection (`mstsc.exe`)
+**Linux**: Remmina, rdesktop, or xfreerdp
+
+## Connecting to SQL Server (RDS Custom)
+
+### Method 1: Port Forward + SSMS (from local machine)
+
+Forward SQL port to your local machine:
+
+```bash
+# Get RDS endpoint
+RDS_ENDPOINT=$(aws rds describe-db-instances \
+  --db-instance-identifier dev-legacy-webapp-rds-custom \
+  --query 'DBInstances[0].Endpoint.Address' \
+  --output text)
+
+# Get EC2 instance ID (as jump host)
+INSTANCE_ID=$(aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=dev-legacy-webapp-ec2" \
+  --query 'Reservations[0].Instances[0].InstanceId' \
+  --output text)
+
+# Start port forward (SQL Server on local port 11433)
+aws ssm start-session \
+  --target $INSTANCE_ID \
+  --document-name AWS-StartPortForwardingSessionToRemoteHost \
+  --parameters "{\"host\":[\"$RDS_ENDPOINT\"],\"portNumber\":[\"1433\"],\"localPortNumber\":[\"11433\"]}"
+```
+
+**Keep this terminal open**. Connect with SSMS or any SQL client:
+
+```
+Server: localhost,11433
+Authentication: SQL Server Authentication
+Username: sa
+Password: [Get from Parameter Store - see below]
+```
+
+#### Get SA Password
+
+```bash
+# Retrieve SA password from Parameter Store
+aws ssm get-parameter \
+  --name /dev/legacy-webapp/rds/sa-password \
+  --with-decryption \
+  --query 'Parameter.Value' \
+  --output text
+```
+
+### Method 2: SSMS from Windows EC2
+
+1. RDP to Windows EC2 (see above)
+2. Open SQL Server Management Studio (SSMS)
+3. Connect to RDS Custom:
+
+```
+Server: <rds-custom-endpoint>
+Authentication: SQL Server Authentication
+Username: sa
+Password: [From Parameter Store]
+```
+
+Get RDS endpoint from EC2 PowerShell:
+
+```powershell
+# Get RDS endpoint
+aws rds describe-db-instances `
+  --db-instance-identifier dev-legacy-webapp-rds-custom `
+  --query 'DBInstances[0].Endpoint.Address' `
+  --output text
+```
+
+Or find in Terraform outputs:
+
+```bash
+terraform output rds_custom_endpoint
+```
+
+### Connection String Examples
+
+**ADO.NET**:
+```
+Server=localhost,11433;Database=YourDB;User Id=sa;Password=<password>;TrustServerCertificate=True;
+```
+
+**JDBC**:
+```
+jdbc:sqlserver://localhost:11433;databaseName=YourDB;user=sa;password=<password>;trustServerCertificate=true;
+```
+
+**ODBC**:
+```
+Driver={ODBC Driver 17 for SQL Server};Server=localhost,11433;Database=YourDB;Uid=sa;Pwd=<password>;TrustServerCertificate=yes;
+```
+
+## Retrieving Credentials
+
+All sensitive credentials are stored in **AWS Systems Manager Parameter Store**.
+
+### List All Parameters
+
+```bash
+aws ssm get-parameters-by-path \
+  --path /dev/legacy-webapp/ \
+  --recursive \
+  --query 'Parameters[*].[Name]' \
+  --output table
+```
+
+### Get Specific Parameter
+
+```bash
+# EC2 Administrator password
+aws ssm get-parameter \
+  --name /dev/legacy-webapp/ec2/admin-password \
+  --with-decryption \
+  --query 'Parameter.Value' \
+  --output text
+
+# RDS SA password
+aws ssm get-parameter \
+  --name /dev/legacy-webapp/rds/sa-password \
+  --with-decryption \
+  --query 'Parameter.Value' \
+  --output text
+```
+
+## Common Development Tasks
+
+### Deploy Application to EC2
+
+1. RDP to EC2 or use SSM session
+2. Application files can be:
+   - Downloaded from S3
+   - Uploaded via RDP clipboard share
+   - Pulled from Git repository
+
+Example using S3:
+
+```powershell
+# From EC2 PowerShell
+Read-S3Object `
+  -BucketName dev-sqlserver-supportfiles-backups-and-iso-files `
+  -Key "applications/my-app.zip" `
+  -File "C:\Temp\my-app.zip"
+
+# Extract
+Expand-Archive -Path "C:\Temp\my-app.zip" -DestinationPath "C:\Apps\my-app"
+```
+
+### Restore Database Backup
+
+```powershell
+# Download backup from S3
+Read-S3Object `
+  -BucketName dev-sqlserver-supportfiles-backups-and-iso-files `
+  -Key "backups/MyDatabase.bak" `
+  -File "D:\Backups\MyDatabase.bak"
+
+# Restore via SSMS or T-SQL
+RESTORE DATABASE [MyDatabase]
+FROM DISK = N'D:\Backups\MyDatabase.bak'
+WITH FILE = 1,
+MOVE N'MyDatabase' TO N'D:\MSSQL\DATA\MyDatabase.mdf',
+MOVE N'MyDatabase_log' TO N'D:\MSSQL\DATA\MyDatabase_log.ldf',
+NOUNLOAD, STATS = 5
+GO
+```
+
+### Check RDS Custom Status
+
+```bash
+# Check if RDS is running
+aws rds describe-db-instances \
+  --db-instance-identifier dev-legacy-webapp-rds-custom \
+  --query 'DBInstances[0].DBInstanceStatus' \
+  --output text
+
+# Check scheduler status
+aws events list-rules --name-prefix dev-legacy-webapp
+```
+
+### Manually Start/Stop RDS Custom
+
+```bash
+# Start (if stopped by scheduler)
+aws rds start-db-instance \
+  --db-instance-identifier dev-legacy-webapp-rds-custom
+
+# Stop (for extended breaks)
+aws rds stop-db-instance \
+  --db-instance-identifier dev-legacy-webapp-rds-custom
+```
+
+**Note**: Starting RDS Custom can take 5-10 minutes.
+
+## Development Workflow
+
+### Typical Daily Workflow
+
+1. **Morning** (6 AM MST / 1 PM UTC):
+   - RDS Custom auto-starts via scheduler
+   - Wait 5-10 minutes for SQL Server to be ready
+
+2. **Connect**:
+   - Start port forward: `aws ssm start-session ...`
+   - Connect SSMS to `localhost,11433`
+   - Or RDP to EC2 if GUI work needed
+
+3. **Develop**:
+   - Write/test application code
+   - Run database migrations
+   - Test queries in SSMS
+
+4. **Evening** (1 AM MST / 8 AM UTC):
+   - RDS Custom auto-stops via scheduler
+   - Ensure all work is committed/backed up
+
+### Working Outside Scheduled Hours
+
+If you need RDS Custom outside scheduled hours:
+
+```bash
+# Start manually
+aws rds start-db-instance \
+  --db-instance-identifier dev-legacy-webapp-rds-custom
+
+# Work...
+
+# Stop when done (to save costs)
+aws rds stop-db-instance \
+  --db-instance-identifier dev-legacy-webapp-rds-custom
+```
+
+## Scheduler Times
+
+| Event | Cron | UTC Time | MST Time | Notes |
+|-------|------|----------|----------|-------|
+| Start weekday | `cron(0 13 ? * MON-FRI *)` | 1:00 PM | 6:00 AM | Monday-Friday |
+| Stop weeknight | `cron(0 8 ? * TUE-FRI *)` | 8:00 AM | 1:00 AM | Tuesday-Friday |
+| Stop weekend | `cron(0 0 ? * SAT *)` | 12:00 AM Sat | 5:00 PM Fri | Friday night |
+
+**Grace Period**: Allow 5-10 minutes after scheduled start time for SQL Server to be fully ready.
+
+## Troubleshooting
+
+### Can't Start SSM Session
+
+**Error**: `TargetNotConnected`
+
+**Solutions**:
+1. Verify EC2 is running: `aws ec2 describe-instances --instance-ids $INSTANCE_ID`
+2. Check SSM agent status in EC2 console
+3. Verify VPC endpoints exist and security groups allow HTTPS
+4. Ensure your IAM user has `ssm:StartSession` permission
+
+### Port Forward Disconnects
+
+**Solutions**:
+1. Check timeout settings in SSM preferences
+2. Ensure local firewall allows loopback connections
+3. Try increasing `localPortNumber` (avoid reserved ports)
+4. Verify Session Manager plugin is up to date
+
+### SSMS Can't Connect to localhost,11433
+
+**Solutions**:
+1. Verify port forward is active (check terminal window)
+2. Ensure RDS Custom is started: `aws rds describe-db-instances`
+3. Check credentials from Parameter Store
+4. Try using `127.0.0.1,11433` instead of `localhost,11433`
+5. Verify SQL Server service is running (may take 5-10 min after RDS start)
+
+### RDS Custom Won't Start
+
+**Solutions**:
+1. Check scheduler disabled it: Review EventBridge rules
+2. Verify CEV status: `aws rds describe-db-engine-versions --engine custom-sqlserver-ee`
+3. Check CloudWatch logs for errors: `/aws/rds/instance/dev-legacy-webapp-rds-custom/`
+4. Ensure IAM roles have correct permissions
+5. Contact AWS support if instance shows `incompatible-parameters`
+
+### Can't Retrieve Parameter Store Values
+
+**Error**: `AccessDeniedException`
+
+**Solutions**:
+1. Verify IAM permissions include `ssm:GetParameter`
+2. Add `--region us-east-2` if using different default region
+3. Check parameter name is exact (case-sensitive)
+4. Ensure KMS key (if encrypted) grants decrypt permissions
+
+## Best Practices
+
+### Security
+
+1. **Never hardcode credentials** - always use Parameter Store
+2. **Use named AWS profiles** for different environments
+3. **Close port forwards** when not in use
+4. **Lock Windows EC2** when stepping away (RDP session)
+5. **Rotate passwords** periodically (update Parameter Store)
+
+### Cost Optimization
+
+1. **Stop RDS Custom** when not needed (outside work hours)
+2. **Use scheduler** - don't override unless necessary
+3. **Monitor costs** via AWS Cost Explorer
+4. **Clean up test databases** to reduce storage costs
+
+### Performance
+
+1. **Test queries** in SSMS before deploying to production
+2. **Monitor RDS CloudWatch metrics** for resource usage
+3. **Index tuning** - use Database Engine Tuning Advisor on EC2
+4. **Backup strategy** - use RDS Custom automated backups
+
+## Quick Reference
+
+### Essential Commands
+
+```bash
+# Get EC2 instance ID
+aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=dev-legacy-webapp-ec2" \
+  --query 'Reservations[0].Instances[0].InstanceId' \
+  --output text
+
+# Get RDS endpoint
+aws rds describe-db-instances \
+  --db-instance-identifier dev-legacy-webapp-rds-custom \
+  --query 'DBInstances[0].Endpoint.Address' \
+  --output text
+
+# RDP port forward
+aws ssm start-session \
+  --target <instance-id> \
   --document-name AWS-StartPortForwardingSession \
   --parameters "portNumber=3389,localPortNumber=13389"
 
-# Port forward: RDS SQL Server
+# SQL port forward
 aws ssm start-session \
-  --target $INSTANCE_ID \
-  --region us-east-2 \
+  --target <instance-id> \
   --document-name AWS-StartPortForwardingSessionToRemoteHost \
-  --parameters "{\"portNumber\":[\"1433\"],\"localPortNumber\":[\"11433\"],\"host\":[\"$RDS_ENDPOINT\"]}"
+  --parameters '{"host":["<rds-endpoint>"],"portNumber":["1433"],"localPortNumber":["11433"]}'
 
-# SSMS connection string (after port forward)
-# Server: localhost,11433
-# Auth: SQL Server Authentication
-# User: admin
+# Get SA password
+aws ssm get-parameter \
+  --name /dev/legacy-webapp/rds/sa-password \
+  --with-decryption \
+  --query 'Parameter.Value' \
+  --output text
 ```
 
-## Additional Resources
+## Support
 
-- [AWS Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager.html)
-- [Port Forwarding with Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-sessions-start.html#sessions-start-port-forwarding)
-- [RDS Custom for SQL Server](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/custom-setup-sqlserver.html)
-- [SSMS Download](https://aka.ms/ssmsfullsetup)
-- [SSM Plugin Installation](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+For infrastructure issues:
+- Check CloudWatch Logs
+- Review Terraform state
+- Consult main [README.md](README.md)
+
+For application issues:
+- Contact development team
+- Check application logs on EC2 (Event Viewer, IIS logs, etc.)
+
+

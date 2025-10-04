@@ -1,26 +1,19 @@
 variable "project_name" {
   description = "Project name"
   type        = string
+  default     = "legacy-webapp"
 }
 
 variable "env" {
-  description = "Environment"
+  description = "Environment name"
   type        = string
+  default     = "dev"
 }
 
 variable "region" {
   description = "AWS region"
   type        = string
-}
-
-variable "vpc_id" {
-  description = "VPC ID for AMI builder"
-  type        = string
-}
-
-variable "subnet_id" {
-  description = "Subnet ID for AMI builder (private subnet recommended)"
-  type        = string
+  default     = "us-east-2"
 }
 
 variable "s3_media_bucket" {
@@ -34,42 +27,14 @@ variable "sql_iso_key" {
 }
 
 variable "sql_cu_key" {
-  description = "S3 key for SQL Server cumulative update"
+  description = "S3 key for SQL Server Cumulative Update"
   type        = string
 }
 
-variable "sql_version" {
-  description = "SQL Server version (2019 or 2022)"
+variable "sa_password_ssm_path" {
+  description = "SSM Parameter Store path for SA password"
   type        = string
-  default     = "2022"
+  default     = "/dev/legacy-webapp/rds/sa-password"
 }
 
-variable "sql_edition" {
-  description = "SQL Server edition (Enterprise, Standard)"
-  type        = string
-  default     = "Enterprise"
-}
 
-variable "sql_instance_name" {
-  description = "SQL Server instance name"
-  type        = string
-  default     = "MSSQLSERVER"
-}
-
-variable "sql_collation" {
-  description = "SQL Server collation"
-  type        = string
-  default     = "SQL_Latin1_General_CP1_CI_AS"
-}
-
-variable "builder_instance_type" {
-  description = "EC2 instance type for AMI builder"
-  type        = string
-  default     = "m5.xlarge"
-}
-
-variable "builder_volume_size" {
-  description = "Root volume size in GB"
-  type        = number
-  default     = 150
-}

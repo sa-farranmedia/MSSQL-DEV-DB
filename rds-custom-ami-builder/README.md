@@ -1,322 +1,491 @@
-# RDS Custom SQL Server AMI Builder
+# RDS Custom AMI Builder
 
-Complete automation for building RDS Custom for SQL Server AMIs, creating Custom Engine Versions (CEVs), and deploying RDS Custom instances.
+This directory contains Terraform configuration and scripts to build a custom AMI for RDS Custom for SQL Server Developer Edition.
 
 ## Overview
 
-RDS Custom for SQL Server requires a specially prepared Windows AMI that meets AWS requirements. This toolkit automates:
+RDS Custom for SQL Server requires a BYOM (Bring Your Own Media) approach using Custom Engine Versions (CEV). This builder:
 
-1. **AMI Builder Instance**: Terraform provisions a temporary EC2 instance
-2. **SQL Server Installation**: Automated PowerShell script installs SQL Server from S3 media
-3. **RDS Custom Configuration**: Applies all required registry settings, services, and permissions
-4. **AMI Creation**: Script or manual process to create AMI from configured instance
-5. **CEV Creation**: Terraform or CLI creates Custom Engine Version
-6. **RDS Instance**: Deploy RDS Custom SQL Server instance
+1. Launches a Windows Server 2019 EC2 instance
+2. Installs SQL Server 2022 Developer Edition + Cumulative Update
+3. Configures SQL Server according to RDS Custom requirements
+4. Creates an AMI from the configured instance
+5. Registers the AMI as a Custom Engine Version (CEV)
+6. Enables deployment of RDS Custom instances using the CEV
 
 ## Prerequisites
 
-- **S3 Media Bucket**: SQL Server ISO and Cumulative Update files uploaded
-- **AWS Permissions**: EC2, RDS, IAM, S3, Systems Manager
-- **Terraform**: >= 1.5.0
-- **AWS CLI**: v2 configured
-- **PowerShell**: For local automation scripts (optional)
+### AWS Requirements
+
+- AWS CLI configured with appropriate credentials
+- IAM permissions for:
+  - EC2 (launch instances, create AMIs)
+  - RDS (create Custom Engine Versions)
+  - S3 (read SQL Server media)
+  - IAM (create roles for CEV)
+
+### SQL Server Media
+
+Upload SQL Server 2022 Developer Edition media to S3:
+
+```bash
+# Upload ISO
+aws s3 cp SQLServer2022-x64-ENU-Dev.iso \
+  s3://dev-sqlserver-supportfiles-backups-and-iso-files/media/
+
+# Upload Cumulative Update
+aws s3 cp sqlserver2022-kb5041321-x64_1b40129fb51df67f28feb2a1ea139044c611b93f.exe \
+  s3://dev-sqlserver-supportfiles-backups-and-iso-files/media/
+```
+
+### SA Password
+
+Store the SA password in SSM Parameter Store:
+
+```bash
+aws ssm put-parameter \
+  --name "/dev/legacy-webapp/rds/sa-password" \
+  --value "YourStrongPassword123!" \
+  --type "SecureString" \
+  --region us-east-2
+```
 
 ## Quick Start
 
-```bash
-# 1. Build the AMI
-cd rds-custom-ami-builder/terraform
-terraform init
-terraform apply -var-file=ami-builder.tfvars
+### 1. Configure Variables
 
-# 2. Wait for installation to complete (check SSM Run Command or CloudWatch Logs)
-# Installation takes 30-45 minutes
-
-# 3. Create the AMI
-./scripts/create-ami.sh
-
-# 4. Create the CEV
-./scripts/create-cev.sh
-
-# 5. Deploy RDS Custom instance (back in main terraform)
-cd ../../terraform
-terraform apply -var="enable_rds_custom=true" -var-file=envs/dev/dev.tfvars
-```
-
-## Detailed Process
-
-### Step 1: Prepare SQL Server Media in S3
-
-Upload your SQL Server installation files:
-
-```bash
-aws s3 cp SERVER_EVAL_x64FRE_en-us.iso \
-  s3://dev-sqlserver-supportfiles-backups-and-iso-files/media/
-
-aws s3 cp sqlserver2022-kb5041321-x64_*.exe \
-  s3://dev-sqlserver-supportfiles-backups-and-iso-files/media/
-```
-
-### Step 2: Deploy AMI Builder Instance
-
-```bash
-cd rds-custom-ami-builder/terraform
-terraform init
-terraform apply -var-file=ami-builder.tfvars
-```
-
-This creates:
-- Windows Server 2019/2022 EC2 instance (RDS Custom compatible)
-- Mounts SQL Server ISO from S3
-- Installs SQL Server Enterprise with required features
-- Applies cumulative update
-- Configures RDS Custom prerequisites
-- Runs sysprep preparation
-
-### Step 3: Monitor Installation Progress
-
-```bash
-# Check SSM Run Command status
-aws ssm list-command-invocations \
-  --instance-id $(terraform output -raw builder_instance_id) \
-  --region us-east-2
-
-# Or check CloudWatch Logs
-aws logs tail /aws/rds-custom/ami-builder --follow --region us-east-2
-```
-
-### Step 4: Create AMI
-
-Once installation completes (instance will stop automatically):
-
-```bash
-# Using provided script
-./scripts/create-ami.sh
-
-# Or manually
-export INSTANCE_ID=$(terraform output -raw builder_instance_id)
-aws ec2 create-image \
-  --instance-id $INSTANCE_ID \
-  --name "rds-custom-sqlserver-2022-$(date +%Y%m%d-%H%M%S)" \
-  --description "RDS Custom SQL Server 2022 Enterprise with CU" \
-  --region us-east-2 \
-  --tag-specifications 'ResourceType=image,Tags=[{Key=Name,Value=rds-custom-sqlserver-2022}]'
-```
-
-Wait for AMI to become available (5-10 minutes):
-
-```bash
-aws ec2 describe-images --image-ids ami-xxxxx --region us-east-2
-```
-
-### Step 5: Create Custom Engine Version (CEV)
-
-```bash
-# Edit scripts/create-cev.sh with your AMI ID
-export AMI_ID="ami-xxxxxxxxxxxxx"
-
-# Run CEV creation
-./scripts/create-cev.sh
-
-# Or use Terraform (update main terraform with AMI ID)
-cd ../../terraform
-terraform apply -var="rds_custom_ami_id=ami-xxxxx" -var-file=envs/dev/dev.tfvars
-```
-
-### Step 6: Deploy RDS Custom Instance
-
-Uncomment the RDS Custom resources in `terraform/modules/rds_custom_dev/main.tf` and apply:
-
-```bash
-cd ../../terraform
-terraform apply -var="enable_rds_custom=true" -var-file=envs/dev/dev.tfvars
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│ 1. AMI Builder Process                                       │
-│                                                               │
-│  S3 Media Bucket                                             │
-│  └── SQL Server ISO + CU                                     │
-│       │                                                       │
-│       ↓                                                       │
-│  EC2 AMI Builder Instance                                    │
-│  ├── Mount ISO via PowerShell                                │
-│  ├── Install SQL Server Enterprise                           │
-│  │   └── Features: Engine, Replication, Full-Text           │
-│  ├── Apply Cumulative Update                                 │
-│  ├── Configure RDS Custom Prerequisites                      │
-│  │   ├── Registry settings                                   │
-│  │   ├── Windows services                                    │
-│  │   └── Permissions & security                              │
-│  └── Run EC2Launch/Sysprep                                   │
-│       │                                                       │
-│       ↓                                                       │
-│  Create AMI Snapshot                                         │
-└───────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────┐
-│ 2. CEV & RDS Custom Deployment                               │
-│                                                               │
-│  Custom AMI                                                   │
-│       │                                                       │
-│       ↓                                                       │
-│  Create Custom Engine Version (CEV)                          │
-│  └── Register AMI with RDS Custom                            │
-│       │                                                       │
-│       ↓                                                       │
-│  Deploy RDS Custom DB Instance                               │
-│  ├── Uses CEV                                                │
-│  ├── Managed by RDS (backups, patching, monitoring)          │
-│  └── Full OS & SQL Server access via SSM                     │
-└───────────────────────────────────────────────────────────────┘
-```
-
-## Configuration Files
-
-### ami-builder.tfvars
+Edit `terraform/ami-builder.tfvars`:
 
 ```hcl
-project_name = "legacy-wepabb"
+project_name = "legacy-webapp"
 env          = "dev"
 region       = "us-east-2"
 
-# Use existing VPC from main project
-vpc_id               = "vpc-xxxxx"
-subnet_id            = "subnet-xxxxx"
-
-# SQL Server media in S3
 s3_media_bucket = "dev-sqlserver-supportfiles-backups-and-iso-files"
-sql_iso_key     = "media/SERVER_EVAL_x64FRE_en-us.iso"
+sql_iso_key     = "media/SQLServer2022-x64-ENU-Dev.iso"
 sql_cu_key      = "media/sqlserver2022-kb5041321-x64_1b40129fb51df67f28feb2a1ea139044c611b93f.exe"
 
-# SQL Server configuration
-sql_version         = "2022"
-sql_edition         = "Enterprise"
-sql_instance_name   = "MSSQLSERVER"
-sql_collation       = "SQL_Latin1_General_CP1_CI_AS"
-
-# Instance configuration
-builder_instance_type = "m5.xlarge"
-builder_volume_size   = 150  # GB - needs space for SQL Server
+# SA password from SSM Parameter Store
+sa_password_ssm_path = "/dev/legacy-webapp/rds/sa-password"
 ```
 
-## SQL Server Features Installed
+### 2. Deploy Builder Instance
 
-The AMI builder installs these SQL Server features (required by RDS Custom):
+```bash
+cd terraform
 
-- **Database Engine Services** (`SQLENGINE`)
-- **SQL Server Replication** (`REPLICATION`)
-- **Full-Text Search** (`FULLTEXT`)
-- **Client Tools Connectivity** (`CONN`)
-- **Management Tools - Basic** (`SSMS`, `ADV_SSMS`)
+# Initialize Terraform
+terraform init
 
-## RDS Custom Prerequisites Applied
+# Plan
+terraform plan -var-file=ami-builder.tfvars
 
-The installation script configures:
+# Apply (creates EC2 instance with SQL Server)
+terraform apply -var-file=ami-builder.tfvars
+```
 
-### Registry Settings
-- SQL Server service accounts
-- TCP/IP enabled on port 1433
-- Mixed mode authentication
-- Error log configuration
+**Wait time**: 30-45 minutes for SQL Server installation and configuration.
 
-### Windows Services
-- SQL Server service (automatic start)
-- SQL Server Agent (automatic start)
-- SQL Server Browser (disabled for RDS Custom)
+### 3. Create AMI
 
-### Security & Permissions
-- SA password set (stored in SSM Parameter Store)
-- RDS Custom IAM role permissions
-- Windows Firewall rules
-- Audit logging enabled
+Once the instance is ready (check CloudWatch logs or SSM into instance):
 
-### EC2Launch/Sysprep
-- Generalized image for AMI creation
-- Admin password randomization
-- Computer name randomization
+```bash
+cd ../scripts
+
+# Create AMI from instance
+./create-ami.sh
+
+# Note the AMI ID from output
+```
+
+### 4. Register Custom Engine Version
+
+```bash
+# Register CEV with RDS
+./create-cev.sh
+
+# This creates CEV version like: 16.00.4210.1.dev-cev-20250103
+```
+
+### 5. Deploy RDS Custom
+
+After CEV is registered and shows as "available":
+
+```bash
+# Update main infrastructure to enable RDS Custom
+cd ../../terraform
+
+# Edit envs/dev/dev.tfvars
+# Set: enable_rds_custom = true
+
+# Uncomment RDS instance in modules/rds_custom_dev/main.tf
+# Update engine_version to match your CEV
+
+# Deploy
+terraform apply -var-file=envs/dev/dev.tfvars
+```
+
+Or use the deployment script:
+
+```bash
+cd rds-custom-ami-builder/scripts
+./deploy-rds-custom.sh
+```
+
+### 6. Clean Up Builder Resources
+
+```bash
+cd ../terraform
+
+# Destroy builder instance (keep AMI and CEV)
+terraform destroy -var-file=ami-builder.tfvars
+```
+
+## File Structure
+
+```
+rds-custom-ami-builder/
+├── README.md                    # This file
+├── terraform/
+│   ├── main.tf                  # Builder EC2 instance
+│   ├── variables.tf             # Input variables
+│   ├── ami-builder.tfvars       # Configuration values
+│   └── install-sql-server.ps1   # SQL Server installation script
+└── scripts/
+    ├── create-ami.sh            # Create AMI from instance
+    ├── create-cev.sh            # Register CEV with RDS
+    └── deploy-rds-custom.sh     # Deploy RDS Custom instance
+```
+
+## SQL Server Configuration Requirements
+
+The AMI builder follows RDS Custom for SQL Server BYOM requirements:
+
+### Instance Configuration
+
+- **Default Instance Name**: `MSSQLSERVER` (no named instances)
+- **Service Accounts**:
+  - Engine: `NT Service\MSSQLSERVER`
+  - Agent: `NT Service\SQLSERVERAGENT`
+- **Startup Type**: Manual for both Engine and Agent
+- **SQL Browser**: Disabled (no UDP/1434)
+- **TCP/IP**: Enabled on port 1433
+- **Default Paths**: Use SQL Server defaults (don't override data/log paths)
+
+### Security
+
+- **SYSTEM Account**: Granted sysadmin role (required by RDS Custom)
+- **SA Account**: SQL authentication enabled
+- **Registry Configuration**: TCP/IP enabled via registry (not SMO/WMI)
+
+### Sysprep
+
+- Uses **EC2Launch v2** with `--shutdown` flag
+- Ensures instance is properly generalized for AMI creation
+
+## Installation Script Details
+
+The `install-sql-server.ps1` script performs these steps:
+
+1. Install AWS PowerShell modules (required for S3 access)
+2. Download SQL Server media from S3
+3. Mount ISO and locate setup.exe
+4. Create ConfigurationFile.ini with proper settings
+5. Install SQL Server silently (SA password via CLI, not INI)
+6. Apply Cumulative Update
+7. Configure TCP/IP via registry (port 1433)
+8. Grant NT AUTHORITY\SYSTEM sysadmin role
+9. Set services to Manual startup
+10. Disable SQL Browser
+11. Run EC2Launch v2 sysprep with shutdown
+
+### PowerShell Variable Escaping
+
+The script uses `$` to escape PowerShell variables in templatefile:
+
+```powershell
+# Terraform variables (single $)
+$S3Bucket = "${s3_bucket}"
+$SaPassword = "${sa_password}"
+
+# PowerShell variables (double $)
+${DriveLetter} = (Get-Volume).DriveLetter
+${SetupPath} = "${DriveLetter}:\setup.exe"
+```
+
+## Scripts
+
+### create-ami.sh
+
+Creates an AMI from the builder instance:
+
+```bash
+#!/bin/bash
+set -e
+
+# Get instance ID from Terraform output
+cd ../terraform
+INSTANCE_ID=$(terraform output -raw builder_instance_id)
+cd ../scripts
+
+# Generate AMI name with timestamp
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+AMI_NAME="sqlserver2022-dev-cev-${TIMESTAMP}"
+
+echo "Creating AMI from instance: $INSTANCE_ID"
+echo "AMI Name: $AMI_NAME"
+
+# Create AMI
+AMI_ID=$(aws ec2 create-image \
+  --instance-id "$INSTANCE_ID" \
+  --name "$AMI_NAME" \
+  --description "SQL Server 2022 Developer Edition with CU for RDS Custom CEV" \
+  --no-reboot \
+  --region us-east-2 \
+  --query 'ImageId' \
+  --output text)
+
+echo "AMI creation initiated: $AMI_ID"
+echo "Waiting for AMI to be available..."
+
+aws ec2 wait image-available \
+  --image-ids "$AMI_ID" \
+  --region us-east-2
+
+echo "✓ AMI is ready: $AMI_ID"
+echo "Save this AMI ID for CEV registration"
+```
+
+### create-cev.sh
+
+Registers the AMI as a Custom Engine Version:
+
+```bash
+#!/bin/bash
+set -e
+
+# Prompt for AMI ID
+read -p "Enter AMI ID: " AMI_ID
+
+# Generate CEV version with date
+CEV_DATE=$(date +%Y%m%d)
+CEV_VERSION="16.00.4210.1.dev-cev-${CEV_DATE}"
+
+echo "Creating Custom Engine Version: $CEV_VERSION"
+echo "Using AMI: $AMI_ID"
+
+# Create CEV
+aws rds create-custom-db-engine-version \
+  --engine custom-sqlserver-ee \
+  --engine-version "$CEV_VERSION" \
+  --database-installation-files-s3-bucket-name "dev-sqlserver-supportfiles-backups-and-iso-files" \
+  --database-installation-files-s3-prefix "media/" \
+  --image-id "$AMI_ID" \
+  --region us-east-2
+
+echo "✓ CEV creation initiated: $CEV_VERSION"
+echo "Check status with:"
+echo "aws rds describe-db-engine-versions --engine custom-sqlserver-ee --engine-version $CEV_VERSION"
+```
+
+### deploy-rds-custom.sh
+
+Deploys RDS Custom instance using the CEV:
+
+```bash
+#!/bin/bash
+set -e
+
+cd ../../terraform
+
+# Prompt for CEV version
+read -p "Enter CEV version (e.g., 16.00.4210.1.dev-cev-20250103): " CEV_VERSION
+
+echo "Updating RDS Custom configuration..."
+
+# Update engine_version in RDS module
+# (User must manually uncomment the resource and update version)
+
+echo "Manual steps required:"
+echo "1. Edit terraform/modules/rds_custom_dev/main.tf"
+echo "2. Uncomment the aws_db_instance.rds_custom resource"
+echo "3. Update engine_version to: $CEV_VERSION"
+echo "4. Edit terraform/envs/dev/dev.tfvars"
+echo "5. Set: enable_rds_custom = true"
+echo ""
+echo "Then run:"
+echo "terraform apply -var-file=envs/dev/dev.tfvars"
+```
+
+## Verification
+
+### Check Instance Status
+
+```bash
+# Get instance ID
+cd terraform
+terraform output builder_instance_id
+
+# Start SSM session
+aws ssm start-session --target <instance-id>
+
+# In PowerShell session, check SQL Server
+Get-Service MSSQLSERVER
+Get-Service SQLSERVERAGENT
+
+# Check logs
+Get-Content C:\Windows\Temp\userdata.log -Tail 50
+```
+
+### Verify SQL Server Installation
+
+```powershell
+# Check SQL Server version
+sqlcmd -S localhost -U sa -P "YourPassword" -Q "SELECT @@VERSION"
+
+# Check TCP/IP is enabled on 1433
+$TCP = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQLServer\SuperSocketNetLib\Tcp"
+Get-ItemProperty -Path "$TCP\IPAll"
+
+# Verify SYSTEM has sysadmin
+sqlcmd -S localhost -U sa -P "YourPassword" -Q "SELECT name FROM sys.server_principals WHERE IS_SRVROLEMEMBER('sysadmin', name) = 1"
+```
+
+### Check CEV Status
+
+```bash
+# List all CEVs
+aws rds describe-db-engine-versions \
+  --engine custom-sqlserver-ee \
+  --region us-east-2
+
+# Check specific CEV
+aws rds describe-db-engine-versions \
+  --engine custom-sqlserver-ee \
+  --engine-version "16.00.4210.1.dev-cev-20250103" \
+  --region us-east-2
+```
+
+CEV must show status `available` before it can be used.
 
 ## Troubleshooting
 
-### Installation Failed
+### SQL Server Installation Fails
 
-Check logs:
-```bash
-# SSM command output
-aws ssm get-command-invocation \
-  --instance-id $INSTANCE_ID \
-  --command-id $COMMAND_ID \
-  --region us-east-2
+**Check logs**:
+```powershell
+# UserData log
+Get-Content C:\Windows\Temp\userdata.log
 
-# CloudWatch Logs
-aws logs tail /aws/rds-custom/ami-builder --follow
+# SQL Server setup log
+Get-Content "C:\Program Files\Microsoft SQL Server\160\Setup Bootstrap\Log\Summary.txt"
 ```
 
-Common issues:
-- **ISO not found**: Verify S3 paths in variables
-- **Insufficient disk space**: Increase `builder_volume_size`
-- **Installation timeout**: SQL Server install can take 30+ minutes
+**Common issues**:
+- S3 media not accessible: Check IAM role permissions
+- SA password not retrieved: Verify SSM Parameter Store path
+- CU fails: Ensure base SQL version matches CU
 
-### AMI Creation Failed
+### AMI Creation Fails
 
-Ensure instance is fully stopped before creating AMI:
-```bash
-aws ec2 describe-instances --instance-ids $INSTANCE_ID \
-  --query 'Reservations[0].Instances[0].State.Name'
+**Solutions**:
+- Ensure instance is in "stopped" or "running" state
+- Check EBS volumes are attached
+- Verify instance is sysprepped (check for Sysprep log)
+
+### CEV Registration Fails
+
+**Common errors**:
+
+1. **"AMI not found"**: Ensure AMI is in `available` state
+2. **"Invalid engine version"**: Use format `16.00.4210.1.dev-cev-YYYYMMDD`
+3. **"S3 bucket not accessible"**: Verify bucket name and RDS service role
+
+**Required IAM for CEV**:
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::dev-sqlserver-supportfiles-backups-and-iso-files",
+        "arn:aws:s3:::dev-sqlserver-supportfiles-backups-and-iso-files/*"
+      ]
+    }
+  ]
+}
 ```
 
-### CEV Creation Failed
+### RDS Custom Instance Won't Start
 
-Validate AMI meets RDS Custom requirements:
-```bash
-# Check AMI is available
-aws ec2 describe-images --image-ids $AMI_ID
+**Solutions**:
+1. Verify CEV status is `available`
+2. Check CloudWatch Logs: `/aws/rds/instance/<instance-id>/`
+3. Ensure custom IAM instance profile is attached
+4. Verify SQL Server services are set to Manual (not Disabled)
+5. Check NT AUTHORITY\SYSTEM has sysadmin role
 
-# Validate AMI tags
-aws ec2 describe-images --image-ids $AMI_ID \
-  --query 'Images[0].Tags'
-```
+## Best Practices
 
-### RDS Instance Won't Start
+1. **Version CEV Names**: Use date-based versioning for easy tracking
+2. **Test AMI**: Launch a test EC2 from AMI before creating CEV
+3. **Document SA Password**: Keep secure but accessible for troubleshooting
+4. **Backup AMIs**: Keep successful AMIs; don't delete immediately
+5. **Tag Resources**: Use consistent tagging for cost tracking
 
-Check RDS Custom logs:
-```bash
-aws rds describe-db-instances \
-  --db-instance-identifier dev-legacy-wepabb-sqlserver
+## Cost Considerations
 
-aws logs tail /aws/rds/custom/dev-legacy-wepabb-sqlserver/agent \
-  --follow --region us-east-2
-```
+- **Builder Instance**: ~$0.20/hour (m5.xlarge)
+- **AMI Storage**: ~$0.05/GB-month (150GB = ~$7.50/month)
+- **CEV**: No additional cost (uses AMI)
 
-## Cost Optimization
+**Recommendation**: Destroy builder instance immediately after AMI creation to save costs.
 
-### Builder Instance
-- **Run only when building**: Destroy after AMI creation
-- **Right-size**: Use m5.xlarge (sufficient for installation)
-- **Spot instances**: Consider for non-critical builds
+## Important Notes
 
-### AMI Storage
-- **EBS snapshots**: ~$0.05/GB/month
-- **Cleanup old AMIs**: Deregister and delete snapshots when not needed
+### SQL Server Developer Edition
 
-### RDS Custom Instance
-- **Scheduler**: Use EventBridge rules to stop when not in use
-- **Right-size**: Start with db.m5.xlarge and adjust based on workload
+This configuration uses **SQL Server Developer Edition**, which is:
+- ✅ Free for development and testing
+- ❌ **NOT** licensed for production use
 
-## Security Best Practices
+For production, you must:
+1. Obtain proper SQL Server licenses (Enterprise or Standard)
+2. Use licensed SQL Server media
+3. Update CEV engine to match edition
+4. Update RDS Custom instance configuration
 
-1. **SA Password**: Stored in SSM Parameter Store (SecureString)
-2. **Encryption**: EBS volumes encrypted by default
-3. **IAM Roles**: Least-privilege for builder and RDS Custom
-4. **Security Groups**: No public access, VPC-only
-5. **Audit Logs**: CloudWatch Logs enabled for all SQL Server logs
-6. **Sysprep**: Ensures no sensitive data in AMI
+### CEV Limitations
 
-## References
+- **Region-specific**: CEV is created in specific region (us-east-2)
+- **Version immutable**: Cannot modify CEV after creation
+- **Deletion**: CEV can only be deleted if no DB instances use it
 
-- [RDS Custom for SQL Server Documentation](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/custom-setup-sqlserver.html)
-- [CEV Creation Guide](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/custom-cev.html)
-- [SQL Server Installation Guide](https://learn.microsoft.com/en-us/sql/database-engine/install-windows/install-sql-server)
+### RDS Custom vs RDS Managed
+
+**RDS Custom gives you**:
+- Full OS and SQL Server access
+- Custom SQL Server configurations
+- Ability to install 3rd party software
+
+**You are responsible for**:
+- OS patching
+- SQL Server patching (CUs, service packs)
+- Monitoring and maintenance
+- Backup management (though automated backups available)
+
+## Support
+
+For issues:
+1. Check CloudWatch Logs
+2. Review SQL Server setup logs on EC2
+3. Verify all prerequisites are met
+4. Consult [AWS RDS Custom documentation](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/custom-sqlserver.html)
+
+

@@ -1,56 +1,86 @@
 #!/bin/bash
-# Deploy RDS Custom SQL Server instance using the created CEV
-
 set -e
 
-# Configuration
-REGION=${AWS_REGION:-us-east-2}
-PROJECT_NAME="legacy-wepabb"
-ENV="dev"
+echo "=========================================="
+echo "Deploy RDS Custom Instance"
+echo "=========================================="
 
-# Load CEV info
-if [ ! -f "../cev-info.txt" ]; then
-    echo "ERROR: CEV info file not found"
-    echo "Run create-cev.sh first"
+# Prompt for CEV version
+read -p "Enter CEV version (e.g., 16.00.4210.1.dev-cev-20250103): " CEV_VERSION
+
+if [ -z "$CEV_VERSION" ]; then
+    echo "ERROR: CEV version is required"
     exit 1
 fi
 
-source ../cev-info.txt
+echo ""
+echo "Checking CEV status..."
 
-echo "=========================================="
-echo "Deploying RDS Custom SQL Server Instance"
-echo "=========================================="
-echo "Engine: $ENGINE"
-echo "Engine Version: $ENGINE_VERSION"
-echo "Region: $REGION"
+# Check if CEV exists and is available
+CEV_STATUS=$(aws rds describe-db-engine-versions \
+  --engine custom-sqlserver-ee \
+  --engine-version "$CEV_VERSION" \
+  --region us-east-2 \
+  --query 'DBEngineVersions[0].Status' \
+  --output text 2>/dev/null || echo "NOT_FOUND")
+
+if [ "$CEV_STATUS" == "NOT_FOUND" ] || [ -z "$CEV_STATUS" ]; then
+    echo "ERROR: CEV $CEV_VERSION not found"
+    echo "Ensure CEV has been created with create-cev.sh"
+    exit 1
+fi
+
+if [ "$CEV_STATUS" != "available" ]; then
+    echo "ERROR: CEV status is '$CEV_STATUS', not 'available'"
+    echo "Wait for CEV to be available before deploying RDS Custom"
+    exit 1
+fi
+
+echo "✓ CEV is available"
 echo ""
 
-# Go back to main terraform directory
+# Navigate to main Terraform directory
 cd ../../terraform
 
-echo "Updating Terraform configuration..."
-echo "Setting enable_rds_custom=true and rds_custom_engine_version=$ENGINE_VERSION"
+echo "=========================================="
+echo "Manual Configuration Required"
+echo "=========================================="
+echo ""
+echo "Before running terraform apply, you must:"
+echo ""
+echo "1. Edit: terraform/modules/rds_custom_dev/main.tf"
+echo "   - Uncomment the 'aws_db_instance.rds_custom' resource"
+echo "   - Update engine_version to: $CEV_VERSION"
+echo ""
+echo "2. Edit: terraform/modules/rds_custom_dev/outputs.tf"
+echo "   - Uncomment the real output blocks"
+echo "   - Comment out placeholder outputs"
+echo ""
+echo "3. Edit: terraform/envs/dev/dev.tfvars"
+echo "   - Set: enable_rds_custom = true"
+echo ""
+echo "4. Run Terraform:"
+echo "   terraform init -backend-config=envs/dev/backend.hcl"
+echo "   terraform apply -var-file=envs/dev/dev.tfvars"
+echo ""
+echo "=========================================="
+echo ""
+read -p "Have you completed these steps? (yes/no): " READY
+
+if [ "$READY" != "yes" ]; then
+    echo ""
+    echo "Complete the manual steps above, then re-run this script"
+    exit 0
+fi
+
+echo ""
+echo "Running terraform apply..."
 echo ""
 
-# Apply Terraform with RDS Custom enabled
-terraform apply \
-  -var="enable_rds_custom=true" \
-  -var="rds_custom_engine_version=$ENGINE_VERSION" \
-  -var-file=envs/dev/dev.tfvars \
-  -auto-approve
+terraform init -backend-config=envs/dev/backend.hcl
+terraform apply -var-file=envs/dev/dev.tfvars
 
 echo ""
 echo "=========================================="
-echo "RDS Custom Instance Deployment Complete!"
+echo "✓ RDS Custom deployment complete!"
 echo "=========================================="
-echo ""
-echo "Get RDS endpoint:"
-echo "  terraform output rds_endpoint"
-echo ""
-echo "Connect via SSM port forwarding:"
-echo "  aws ssm start-session \\"
-echo "    --target \$(terraform output -raw instance_id) \\"
-echo "    --region $REGION \\"
-echo "    --document-name AWS-StartPortForwardingSessionToRemoteHost \\"
-echo "    --parameters '{\"portNumber\":[\"1433\"],\"localPortNumber\":[\"11433\"],\"host\":[\"\$(terraform output -raw rds_endpoint)\"]}'"
-echo ""

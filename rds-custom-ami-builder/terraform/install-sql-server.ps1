@@ -1,259 +1,239 @@
 <powershell>
-# RDS Custom for SQL Server - AMI Builder Installation Script
-# This script installs and configures SQL Server for RDS Custom compatibility
+# SQL Server Installation Script for RDS Custom CEV
+# CRITICAL: Uses $ for PowerShell variable escaping in templatefile
 
-$ErrorActionPreference = "Stop"
-$LogFile = "C:\RDSCustom\install.log"
-$Region = "${region}"
-$S3Bucket = "${s3_media_bucket}"
-$IsoKey = "${sql_iso_key}"
-$CUKey = "${sql_cu_key}"
-$SqlVersion = "${sql_version}"
-$SqlEdition = "${sql_edition}"
-$InstanceName = "${sql_instance_name}"
-$Collation = "${sql_collation}"
-$SAPasswordParam = "${sa_password_param}"
-
-# Create directories
-New-Item -ItemType Directory -Force -Path "C:\RDSCustom" | Out-Null
-New-Item -ItemType Directory -Force -Path "C:\SQLMedia" | Out-Null
-New-Item -ItemType Directory -Force -Path "C:\SQLInstall" | Out-Null
+# Configure logging
+$LogFile = "C:\Windows\Temp\sql-install.log"
 
 function Write-Log {
     param([string]$Message)
-    $Timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    $LogMessage = "$Timestamp - $Message"
-    Add-Content -Path $LogFile -Value $LogMessage
-    Write-Host $LogMessage
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$timestamp - $Message" | Out-File -FilePath $LogFile -Append
+    Write-Host $Message
 }
 
 Write-Log "=========================================="
-Write-Log "RDS Custom SQL Server AMI Builder Started"
+Write-Log "SQL Server 2022 Developer Edition Install"
 Write-Log "=========================================="
 
-# Retrieve SA password from SSM
-Write-Log "Retrieving SA password from SSM Parameter Store..."
 try {
-    $SAPassword = (aws ssm get-parameter --name $SAPasswordParam --with-decryption --region $Region --query 'Parameter.Value' --output text)
-    Write-Log "SA password retrieved successfully."
-} catch {
-    Write-Log "ERROR: Failed to retrieve SA password: $_"
-    exit 1
-}
+    # ========================================
+    # STEP 1: Install AWS PowerShell Modules
+    # ========================================
+    Write-Log "STEP 1: Installing AWS PowerShell modules"
 
-# Download SQL Server ISO from S3
-Write-Log "Downloading SQL Server ISO from S3..."
-try {
-    aws s3 cp "s3://$S3Bucket/$IsoKey" "C:\SQLMedia\SQLServer.iso" --region $Region
-    Write-Log "SQL Server ISO downloaded successfully."
-} catch {
-    Write-Log "ERROR: Failed to download SQL Server ISO: $_"
-    exit 1
-}
+    Install-PackageProvider -Name NuGet -Force -Scope AllUsers | Out-Null
+    Write-Log "✓ NuGet package provider installed"
 
-# Download Cumulative Update from S3
-Write-Log "Downloading SQL Server Cumulative Update from S3..."
-try {
-    aws s3 cp "s3://$S3Bucket/$CUKey" "C:\SQLMedia\SQLCU.exe" --region $Region
-    Write-Log "Cumulative Update downloaded successfully."
-} catch {
-    Write-Log "ERROR: Failed to download Cumulative Update: $_"
-    exit 1
-}
+    Install-Module -Name AWS.Tools.S3 -Force -Scope AllUsers -ErrorAction Stop
 
-# Mount ISO
-Write-Log "Mounting SQL Server ISO..."
-try {
-    $MountResult = Mount-DiskImage -ImagePath "C:\SQLMedia\SQLServer.iso" -PassThru
-    $DriveLetter = ($MountResult | Get-Volume).DriveLetter
-    Write-Log "ISO mounted to drive $DriveLetter`:"
-} catch {
-    Write-Log "ERROR: Failed to mount ISO: $_"
-    exit 1
-}
+    Write-Log "✓ AWS.Tools.S3 module installed"
 
-# Install SQL Server
-Write-Log "Installing SQL Server $SqlVersion $SqlEdition..."
-Write-Log "This will take 20-30 minutes..."
+    # ========================================
+    # STEP 2: Download SQL Server Media from S3
+    # ========================================
+    Write-Log "STEP 2: Downloading SQL Server media from S3"
 
-$SetupPath = "$DriveLetter`:\setup.exe"
-$ConfigFile = @"
+    $S3Bucket   = "${s3_bucket}"
+    $IsoKey     = "${sql_iso_key}"
+    $CuKey      = "${sql_cu_key}"
+    $SaPassword = "${sa_password}"
+
+    Write-Log "S3 Bucket: $S3Bucket"
+    Write-Log "ISO Key: $IsoKey"
+    Write-Log "CU Key: $CuKey"
+
+    $WorkDir  = "C:\SQLInstall"
+    $ISOPath  = Join-Path $WorkDir "SQLServer2022-DEV.iso"
+    $CUPath   = Join-Path $WorkDir "SQLServer2022-CU.exe"
+
+    New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
+    Write-Log "✓ Created working directory: $WorkDir"
+
+    Write-Log "Downloading SQL Server ISO..."
+    Read-S3Object -BucketName $S3Bucket -Key $IsoKey -File $ISOPath -ErrorAction Stop
+    Write-Log "✓ Downloaded ISO: $ISOPath"
+
+    Write-Log "Downloading Cumulative Update..."
+    Read-S3Object -BucketName $S3Bucket -Key $CuKey -File $CUPath -ErrorAction Stop
+    Write-Log "✓ Downloaded CU: $CUPath"
+
+    # ========================================
+    # STEP 3: Mount ISO and Locate Setup
+    # ========================================
+    Write-Log "STEP 3: Mounting SQL Server ISO"
+
+    $img = Mount-DiskImage -ImagePath $ISOPath -PassThru -ErrorAction Stop
+    Write-Log "✓ ISO mounted"
+
+    # Use $ for PowerShell variables (templatefile escaping)
+    $DriveLetter = ($img | Get-Volume | Where-Object DriveLetter | Select-Object -First 1).DriveLetter
+    Write-Log "✓ Drive letter: $${DriveLetter}"
+
+    $SetupPath = "$${DriveLetter}:\setup.exe"
+    Write-Log "✓ Setup path: $SetupPath"
+
+    # ========================================
+    # STEP 4: Create Configuration File
+    # ========================================
+    Write-Log "STEP 4: Creating SQL Server configuration file"
+
+    $IniPath = Join-Path $WorkDir "ConfigurationFile.ini"
+
+    # CRITICAL: ConfigurationFile.ini for RDS Custom requirements
+    @"
 [OPTIONS]
 ACTION="Install"
-QUIET="True"
-IACCEPTSQLSERVERLICENSETERMS="True"
-ENU="True"
-UPDATEENABLED="False"
-FEATURES=SQLENGINE,REPLICATION,FULLTEXT,CONN
-INSTANCENAME="$InstanceName"
-INSTANCEID="$InstanceName"
-SQLSVCACCOUNT="NT AUTHORITY\SYSTEM"
-SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
-AGTSVCACCOUNT="NT AUTHORITY\SYSTEM"
+FEATURES=SQLENGINE,REPLICATION,FULLTEXT
+INSTANCENAME="MSSQLSERVER"
+INSTANCEID="MSSQLSERVER"
+SQLSVCACCOUNT="NT Service\MSSQLSERVER"
+AGTSVCACCOUNT="NT Service\SQLSERVERAGENT"
+SQLSVCSTARTUPTYPE="Manual"
+AGTSVCSTARTUPTYPE="Manual"
+BROWSERSVCSTARTUPTYPE="Disabled"
 SECURITYMODE="SQL"
-SAPWD="$SAPassword"
-SQLCOLLATION="$Collation"
-SQLBACKUPDIR="C:\SQLBackup"
-SQLUSERDBDIR="C:\SQLData"
-SQLUSERDBLOGDIR="C:\SQLLog"
-SQLTEMPDBDIR="C:\SQLTemp"
-SQLTEMPDBLOGDIR="C:\SQLTempLog"
-TCPENABLED="1"
-NPENABLED="0"
+IACCEPTSQLSERVERLICENSETERMS="True"
+"@ | Set-Content -Path $IniPath -Encoding ASCII
+
+    Write-Log "✓ Configuration file created: $IniPath"
+
+    # ========================================
+    # STEP 5: Install SQL Server
+    # ========================================
+    Write-Log "STEP 5: Installing SQL Server 2022 Developer Edition"
+    Write-Log "This will take 15-20 minutes..."
+
+    # CRITICAL: SA password passed on command line, NOT in INI file
+    $InstallArgs = @(
+        "/q",
+        "/ACTION=Install",
+        "/IACCEPTSQLSERVERLICENSETERMS",
+        "/ConfigurationFile=`"$IniPath`"",
+        "/SAPWD=`"$${SaPassword}`""
+    )
+
+    Start-Process -FilePath $SetupPath -ArgumentList $InstallArgs -Wait -NoNewWindow -ErrorAction Stop
+    Write-Log "✓ SQL Server installation completed"
+
+    # ========================================
+    # STEP 6: Apply Cumulative Update
+    # ========================================
+    Write-Log "STEP 6: Applying Cumulative Update"
+    Write-Log "This will take 10-15 minutes..."
+
+    $CUArgs = @(
+        "/quiet",
+        "/IAcceptSQLServerLicenseTerms",
+        "/Action=Patch",
+        "/AllInstances"
+    )
+
+    Start-Process -FilePath $CUPath -ArgumentList $CUArgs -Wait -NoNewWindow -ErrorAction Stop
+    Write-Log "✓ Cumulative Update applied"
+
+    # ========================================
+    # STEP 7: Configure TCP/IP via Registry
+    # ========================================
+    Write-Log "STEP 7: Configuring TCP/IP on port 1433"
+
+    # Stop SQL Server to modify registry
+    Stop-Service MSSQLSERVER -Force -ErrorAction Stop
+    Start-Sleep -Seconds 5
+    Write-Log "✓ Stopped SQL Server service"
+
+    # CRITICAL: Configure TCP/IP via REGISTRY (not SMO/WMI)
+    $TCP = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQLServer\SuperSocketNetLib\Tcp"
+
+    New-ItemProperty -Path $TCP -Name Enabled -Value 1 -PropertyType DWord -Force | Out-Null
+    Write-Log "✓ Enabled TCP/IP protocol"
+
+    New-ItemProperty -Path "$TCP\IPAll" -Name TcpPort -Value "1433" -PropertyType String -Force | Out-Null
+    Write-Log "✓ Set TCP port to 1433"
+
+    New-ItemProperty -Path "$TCP\IPAll" -Name TcpDynamicPorts -Value "" -PropertyType String -Force | Out-Null
+    Write-Log "✓ Disabled dynamic ports"
+
+    # Start SQL Server with new settings
+    Start-Service MSSQLSERVER -ErrorAction Stop
+    Start-Sleep -Seconds 10
+    Write-Log "✓ Started SQL Server service with TCP/IP enabled"
+
+    # ========================================
+    # STEP 8: Grant SYSTEM Sysadmin Role
+    # ========================================
+    Write-Log "STEP 8: Granting NT AUTHORITY\SYSTEM sysadmin role"
+
+    # Install SqlServer PowerShell module
+    Install-Module -Name SqlServer -Force -Scope AllUsers -ErrorAction Stop
+    Import-Module SqlServer -ErrorAction Stop
+    Write-Log "✓ SqlServer PowerShell module loaded"
+
+    # Grant SYSTEM sysadmin (REQUIRED by RDS Custom)
+    $GrantSystemQuery = @"
+IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = N'NT AUTHORITY\SYSTEM')
+    CREATE LOGIN [NT AUTHORITY\SYSTEM] FROM WINDOWS;
+EXEC sp_addsrvrolemember N'NT AUTHORITY\SYSTEM', N'sysadmin';
 "@
 
-$ConfigFile | Out-File -FilePath "C:\SQLInstall\ConfigurationFile.ini" -Encoding ASCII
+    Invoke-Sqlcmd -ServerInstance localhost -Username sa -Password $${SaPassword} -Query $GrantSystemQuery -ErrorAction Stop
+    Write-Log "✓ Granted NT AUTHORITY\SYSTEM sysadmin role"
 
-try {
-    $InstallProcess = Start-Process -FilePath $SetupPath -ArgumentList "/ConfigurationFile=C:\SQLInstall\ConfigurationFile.ini" -Wait -PassThru -NoNewWindow
+    # ========================================
+    # STEP 9: Set Services to Manual
+    # ========================================
+    Write-Log "STEP 9: Configuring service startup types"
 
-    if ($InstallProcess.ExitCode -eq 0) {
-        Write-Log "SQL Server installed successfully."
-    } elseif ($InstallProcess.ExitCode -eq 3010) {
-        Write-Log "SQL Server installed successfully (reboot required)."
+    Set-Service MSSQLSERVER -StartupType Manual -ErrorAction Stop
+    Write-Log "✓ Set MSSQLSERVER startup type to Manual"
+
+    Set-Service SQLSERVERAGENT -StartupType Manual -ErrorAction SilentlyContinue
+    Write-Log "✓ Set SQLSERVERAGENT startup type to Manual"
+
+    # Stop services for AMI creation
+    Stop-Service SQLSERVERAGENT -ErrorAction SilentlyContinue
+    Write-Log "✓ Stopped SQLSERVERAGENT"
+
+    Stop-Service MSSQLSERVER -ErrorAction Stop
+    Write-Log "✓ Stopped MSSQLSERVER"
+
+    # ========================================
+    # STEP 10: Disable SQL Browser
+    # ========================================
+    Write-Log "STEP 10: Disabling SQL Browser service"
+
+    Set-Service SQLBrowser -StartupType Disabled -ErrorAction SilentlyContinue
+    Stop-Service SQLBrowser -ErrorAction SilentlyContinue
+    Write-Log "✓ SQL Browser disabled"
+
+    # ========================================
+    # STEP 11: EC2Launch v2 Sysprep
+    # ========================================
+    Write-Log "STEP 11: Running EC2Launch v2 sysprep with shutdown"
+
+    $ec2launch = "$env:ProgramFiles\Amazon\EC2Launch\EC2Launch.exe"
+
+    if (Test-Path $ec2launch) {
+        Write-Log "Running sysprep: $ec2launch sysprep --shutdown"
+        & $ec2launch sysprep --shutdown
+        Write-Log "✓ Sysprep initiated - instance will shutdown"
     } else {
-        Write-Log "ERROR: SQL Server installation failed with exit code: $($InstallProcess.ExitCode)"
-        Write-Log "Check installation logs at: C:\Program Files\Microsoft SQL Server\*\Setup Bootstrap\Log\Summary.txt"
-        exit 1
+        Write-Log "WARNING: EC2Launch not found at $ec2launch"
+        Write-Log "Manual sysprep required before creating AMI"
     }
+
+    Write-Log "=========================================="
+    Write-Log "SQL Server installation COMPLETED"
+    Write-Log "=========================================="
+
 } catch {
-    Write-Log "ERROR: SQL Server installation exception: $_"
-    exit 1
+    Write-Log "=========================================="
+    Write-Log "ERROR: SQL Server installation FAILED"
+    Write-Log "Error: $_"
+    Write-Log "Stack Trace: $($_.ScriptStackTrace)"
+    Write-Log "=========================================="
+    throw
 }
-
-# Unmount ISO
-Write-Log "Unmounting SQL Server ISO..."
-Dismount-DiskImage -ImagePath "C:\SQLMedia\SQLServer.iso"
-
-# Apply Cumulative Update
-Write-Log "Applying SQL Server Cumulative Update..."
-Write-Log "This will take 10-15 minutes..."
-
-try {
-    $CUProcess = Start-Process -FilePath "C:\SQLMedia\SQLCU.exe" -ArgumentList "/quiet", "/IAcceptSQLServerLicenseTerms", "/Action=Patch", "/AllInstances" -Wait -PassThru -NoNewWindow
-
-    if ($CUProcess.ExitCode -eq 0 -or $CUProcess.ExitCode -eq 3010) {
-        Write-Log "Cumulative Update applied successfully."
-    } else {
-        Write-Log "WARNING: Cumulative Update may have failed with exit code: $($CUProcess.ExitCode)"
-        Write-Log "Continuing with RDS Custom configuration..."
-    }
-} catch {
-    Write-Log "WARNING: Cumulative Update exception: $_"
-    Write-Log "Continuing with RDS Custom configuration..."
-}
-
-# Configure SQL Server for RDS Custom
-Write-Log "Configuring SQL Server for RDS Custom compatibility..."
-
-# Enable TCP/IP and set port 1433
-Write-Log "Configuring TCP/IP protocol..."
-$SqlWmiManagement = [System.Reflection.Assembly]::LoadWithPartialName('Microsoft.SqlServer.SqlWmiManagement')
-$SMOWmiServer = New-Object Microsoft.SqlServer.Management.Smo.Wmi.ManagedComputer
-$TCPProtocol = $SMOWmiServer.ServerInstances[$InstanceName].ServerProtocols['Tcp']
-$TCPProtocol.IsEnabled = $true
-$TCPProtocol.Alter()
-
-$TCPIPAll = $TCPProtocol.IPAddresses['IPAll']
-$TCPIPAll.IPAddressProperties['TcpPort'].Value = '1433'
-$TCPIPAll.IPAddressProperties['TcpDynamicPorts'].Value = ''
-$TCPIPAll.Alter()
-
-Write-Log "TCP/IP protocol configured on port 1433."
-
-# Configure SQL Server Agent
-Write-Log "Configuring SQL Server Agent..."
-Set-Service -Name "SQLSERVERAGENT" -StartupType Automatic
-Start-Service -Name "SQLSERVERAGENT"
-Write-Log "SQL Server Agent configured and started."
-
-# Disable SQL Browser (not needed for RDS Custom)
-Write-Log "Disabling SQL Browser..."
-Stop-Service -Name "SQLBrowser" -Force -ErrorAction SilentlyContinue
-Set-Service -Name "SQLBrowser" -StartupType Disabled
-Write-Log "SQL Browser disabled."
-
-# Configure Windows Firewall
-Write-Log "Configuring Windows Firewall rules..."
-New-NetFirewallRule -DisplayName "SQL Server" -Direction Inbound -Protocol TCP -LocalPort 1433 -Action Allow -Profile Any
-Write-Log "Firewall rules configured."
-
-# Enable SQL Server audit logging
-Write-Log "Configuring SQL Server audit logging..."
-$SqlCmd = @"
-USE master;
-GO
-EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'AuditLevel', REG_DWORD, 3;
-GO
-"@
-Invoke-Sqlcmd -Query $SqlCmd -ServerInstance "localhost" -Username "sa" -Password $SAPassword
-
-Write-Log "Audit logging configured."
-
-# Restart SQL Server services
-Write-Log "Restarting SQL Server services..."
-Restart-Service -Name "MSSQLSERVER" -Force
-Start-Sleep -Seconds 10
-Restart-Service -Name "SQLSERVERAGENT" -Force
-Write-Log "SQL Server services restarted."
-
-# Verify installation
-Write-Log "Verifying SQL Server installation..."
-try {
-    $VersionQuery = "SELECT @@VERSION AS Version"
-    $Version = Invoke-Sqlcmd -Query $VersionQuery -ServerInstance "localhost" -Username "sa" -Password $SAPassword
-    Write-Log "SQL Server Version: $($Version.Version)"
-} catch {
-    Write-Log "ERROR: Failed to verify SQL Server installation: $_"
-    exit 1
-}
-
-# RDS Custom specific configurations
-Write-Log "Applying RDS Custom specific configurations..."
-
-# Set recommended registry settings for RDS Custom
-Write-Log "Setting RDS Custom registry values..."
-$RegPath = "HKLM:\SOFTWARE\Microsoft\MSSQLServer\MSSQLServer"
-Set-ItemProperty -Path $RegPath -Name "LoginMode" -Value 2  # Mixed mode
-Set-ItemProperty -Path $RegPath -Name "BackupDirectory" -Value "C:\SQLBackup"
-
-Write-Log "Registry settings configured."
-
-# Clean up installation files
-Write-Log "Cleaning up installation files..."
-Remove-Item -Path "C:\SQLMedia" -Recurse -Force -ErrorAction SilentlyContinue
-Remove-Item -Path "C:\SQLInstall" -Recurse -Force -ErrorAction SilentlyContinue
-Write-Log "Cleanup completed."
-
-# Prepare for Sysprep (EC2Launch v2)
-Write-Log "Preparing instance for AMI creation..."
-
-# Stop SQL Server services before sysprep
-Write-Log "Stopping SQL Server services..."
-Stop-Service -Name "SQLSERVERAGENT" -Force
-Stop-Service -Name "MSSQLSERVER" -Force
-
-# Run EC2Launch sysprep (for Windows Server 2016+)
-Write-Log "Running EC2Launch sysprep..."
-try {
-    & "C:\ProgramData\Amazon\EC2Launch\Scripts\InitializeInstance.ps1" -Schedule
-    Write-Log "EC2Launch sysprep scheduled."
-} catch {
-    Write-Log "WARNING: EC2Launch sysprep failed: $_"
-}
-
-Write-Log "=========================================="
-Write-Log "RDS Custom SQL Server AMI Builder Complete"
-Write-Log "=========================================="
-Write-Log "Instance is ready for AMI creation."
-Write-Log "Next steps:"
-Write-Log "  1. Stop this instance"
-Write-Log "  2. Create AMI from this instance"
-Write-Log "  3. Create Custom Engine Version (CEV)"
-Write-Log "  4. Deploy RDS Custom instance"
-
-# Stop the instance (comment out if you want to review logs first)
-# Write-Log "Stopping instance..."
-# Stop-Computer -Force
-
 </powershell>
+
+

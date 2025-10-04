@@ -1,20 +1,20 @@
 locals {
-  name_prefix = "${var.env}-${var.project_name}"
-
   common_tags = {
-    Name    = "${local.name_prefix}"
     env     = var.env
     project = var.project_name
+    managed = "terraform"
   }
 
-  # SQL Server media references
-  sql_iso_path = "s3://${var.s3_media_bucket}/${var.sql_iso_key}"
-  sql_cu_path  = "s3://${var.s3_media_bucket}/${var.sql_cu_key}"
+  # Split static IPs: first is primary, rest are secondary
+  primary_ip    = var.static_ips[0]
+  secondary_ips = slice(var.static_ips, 1, length(var.static_ips))
 
-  # AZ mapping
+  # Availability zones
   azs = data.aws_availability_zones.available.names
 }
 
 data "aws_availability_zones" "available" {
   state = "available"
 }
+
+

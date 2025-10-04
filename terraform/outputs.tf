@@ -18,57 +18,44 @@ output "public_subnet_ids" {
   value       = module.vpc.public_subnet_ids
 }
 
-output "instance_id" {
+output "ec2_instance_id" {
   description = "Windows EC2 instance ID"
   value       = module.windows_ec2.instance_id
 }
 
-output "instance_private_ip" {
-  description = "Primary private IP of Windows EC2"
-  value       = module.windows_ec2.instance_private_ip
+output "ec2_private_ip" {
+  description = "Windows EC2 primary private IP"
+  value       = module.windows_ec2.private_ip
 }
 
-output "primary_eni_id" {
-  description = "Primary ENI ID"
-  value       = module.windows_ec2.primary_eni_id
+output "ec2_all_private_ips" {
+  description = "All Windows EC2 private IPs (primary + secondary)"
+  value       = module.windows_ec2.all_private_ips
 }
 
-output "additional_eni_ids" {
-  description = "Additional ENI IDs (if multi_eni strategy)"
-  value       = module.windows_ec2.additional_eni_ids
-}
-
-output "static_private_ips" {
-  description = "List of 5 static private IPs assigned"
-  value       = module.windows_ec2.static_private_ips
-}
-
-output "ssm_connect_command" {
-  description = "AWS CLI command to connect via SSM"
-  value       = "aws ssm start-session --target ${module.windows_ec2.instance_id} --region ${var.region}"
-}
-
-output "rds_endpoint" {
+output "rds_custom_endpoint" {
   description = "RDS Custom endpoint (if enabled)"
-  value       = module.rds_custom_dev.rds_endpoint
+  value       = var.enable_rds_custom ? module.rds_custom[0].endpoint : "Not enabled"
 }
 
-output "rds_arn" {
-  description = "RDS Custom ARN (if enabled)"
-  value       = module.rds_custom_dev.rds_arn
+output "rds_custom_instance_id" {
+  description = "RDS Custom instance ID (if enabled)"
+  value       = var.enable_rds_custom ? module.rds_custom[0].db_instance_id : "Not enabled"
 }
 
-output "scheduler_start_rule_arn" {
-  description = "EventBridge start rule ARN"
-  value       = module.rds_custom_dev.scheduler_start_rule_arn
+output "ssm_start_session_command" {
+  description = "Command to start SSM session to EC2"
+  value       = "aws ssm start-session --target ${module.windows_ec2.instance_id}"
 }
 
-output "scheduler_stop_rule_arn" {
-  description = "EventBridge stop rule ARN"
-  value       = module.rds_custom_dev.scheduler_stop_rule_arn
+output "ssm_rdp_port_forward_command" {
+  description = "Command to start RDP port forwarding"
+  value       = "aws ssm start-session --target ${module.windows_ec2.instance_id} --document-name AWS-StartPortForwardingSession --parameters 'portNumber=3389,localPortNumber=13389'"
 }
 
-output "scheduler_lambda_arn" {
-  description = "Scheduler Lambda function ARN"
-  value       = module.rds_custom_dev.scheduler_lambda_arn
+output "ssm_sql_port_forward_command" {
+  description = "Command to start SQL Server port forwarding (if RDS enabled)"
+  value       = var.enable_rds_custom ? "aws ssm start-session --target ${module.windows_ec2.instance_id} --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '{\"host\":[\"${module.rds_custom[0].endpoint}\"],\"portNumber\":[\"1433\"],\"localPortNumber\":[\"11433\"]}'" : "RDS Custom not enabled"
 }
+
+

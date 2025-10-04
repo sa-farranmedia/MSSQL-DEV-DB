@@ -4,7 +4,7 @@ variable "project_name" {
 }
 
 variable "env" {
-  description = "Environment"
+  description = "Environment name"
   type        = string
 }
 
@@ -18,23 +18,41 @@ variable "vpc_id" {
   type        = string
 }
 
-variable "private_subnet_ids" {
-  description = "Private subnet IDs"
-  type        = list(string)
-}
-
-variable "additional_ip_strategy" {
-  description = "Strategy for additional IPs: secondary_ips or multi_eni"
+variable "subnet_id" {
+  description = "Subnet ID for EC2 instance"
   type        = string
 }
 
-variable "static_ips" {
-  description = "List of 5 static private IPs"
-  type        = list(string)
-  default     = null
+variable "vpc_cidr" {
+  description = "VPC CIDR block"
+  type        = string
 }
 
 variable "s3_media_bucket" {
-  description = "S3 bucket for SQL Server media"
+  description = "S3 bucket for media and backups"
   type        = string
 }
+
+variable "primary_private_ip" {
+  description = "Primary private IP for EC2 instance"
+  type        = string
+}
+
+variable "secondary_ips" {
+  description = "List of secondary private IPs to assign"
+  type        = list(string)
+}
+
+variable "ssm_allowed_users" {
+  description = "List of IAM usernames allowed to start SSM sessions"
+  type        = list(string)
+  default     = []
+}
+
+variable "tags" {
+  description = "Common tags"
+  type        = map(string)
+  default     = {}
+}
+
+

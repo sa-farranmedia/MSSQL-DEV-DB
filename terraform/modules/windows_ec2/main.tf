@@ -1,15 +1,25 @@
-# Fetch latest Windows Server 2022 AMI
-data "aws_ssm_parameter" "windows_2022_ami" {
-  name = "/aws/service/ami-windows-latest/Windows_Server-2022-English-Full-Base"
+# Data source for latest Windows Server 2022 AMI
+data "aws_ami" "windows_2022" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["Windows_Server-2022-English-Full-Base-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
 }
 
 # Security Group for EC2
 resource "aws_security_group" "ec2" {
-  name_prefix = "${var.env}-${var.project_name}-ec2-"
+  name        = "${var.env}-${var.project_name}-ec2-sg"
   description = "Security group for Windows EC2 instance"
   vpc_id      = var.vpc_id
 
-  # Allow all outbound (for VPC endpoints, S3, etc.)
   egress {
     description = "Allow all outbound"
     from_port   = 0
@@ -18,14 +28,14 @@ resource "aws_security_group" "ec2" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-ec2-sg"
-  }
+  })
 }
 
 # IAM Role for EC2
 resource "aws_iam_role" "ec2" {
-  name_prefix = "${var.env}-${var.project_name}-ec2-"
+  name = "${var.env}-${var.project_name}-ec2-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -40,36 +50,31 @@ resource "aws_iam_role" "ec2" {
     ]
   })
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-ec2-role"
-  }
+  })
 }
 
-# IAM Policy for SSM and S3 access
-resource "aws_iam_role_policy" "ec2" {
-  name_prefix = "${var.env}-${var.project_name}-ec2-"
-  role        = aws_iam_role.ec2.id
+# Attach SSM Managed Instance Core Policy
+resource "aws_iam_role_policy_attachment" "ssm" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+# Attach CloudWatch Agent Policy
+resource "aws_iam_role_policy_attachment" "cloudwatch" {
+  role       = aws_iam_role.ec2.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
+
+# Custom Policy for S3 and SSM Parameter Store Access
+resource "aws_iam_role_policy" "ec2_custom" {
+  name = "${var.env}-${var.project_name}-ec2-custom-policy"
+  role = aws_iam_role.ec2.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:UpdateInstanceInformation",
-          "ssmmessages:CreateControlChannel",
-          "ssmmessages:CreateDataChannel",
-          "ssmmessages:OpenControlChannel",
-          "ssmmessages:OpenDataChannel",
-          "ec2messages:AcknowledgeMessage",
-          "ec2messages:DeleteMessage",
-          "ec2messages:FailMessage",
-          "ec2messages:GetEndpoint",
-          "ec2messages:GetMessages",
-          "ec2messages:SendReply"
-        ]
-        Resource = "*"
-      },
       {
         Effect = "Allow"
         Action = [
@@ -84,95 +89,51 @@ resource "aws_iam_role_policy" "ec2" {
       {
         Effect = "Allow"
         Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents",
-          "logs:DescribeLogStreams"
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:GetParametersByPath"
         ]
-        Resource = "arn:aws:logs:${var.region}:*:log-group:/aws/ec2/${var.env}-${var.project_name}*"
+        Resource = "arn:aws:ssm:${var.region}:*:parameter/${var.env}/${var.project_name}/*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt"
+        ]
+        Resource = "*"
       }
     ]
   })
 }
 
-# Attach SSM Managed Instance Core policy
-resource "aws_iam_role_policy_attachment" "ssm_core" {
-  role       = aws_iam_role.ec2.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
 # Instance Profile
 resource "aws_iam_instance_profile" "ec2" {
-  name_prefix = "${var.env}-${var.project_name}-ec2-"
-  role        = aws_iam_role.ec2.name
+  name = "${var.env}-${var.project_name}-ec2-profile"
+  role = aws_iam_role.ec2.name
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-ec2-profile"
-  }
+  })
 }
 
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "ec2" {
-  name              = "/aws/ec2/${var.env}-${var.project_name}"
-  retention_in_days = 7
-
-  tags = {
-    Name = "${var.env}-${var.project_name}-logs"
-  }
-}
-
-# Validate ENI/IP constraints for m6i.2xlarge
-locals {
-  max_enis_for_instance = 4
-  max_ips_per_eni       = 15
-
-  # Determine ENI/IP allocation based on strategy
-  use_secondary_ips = var.additional_ip_strategy == "secondary_ips"
-  use_multi_eni     = var.additional_ip_strategy == "multi_eni"
-
-  # For secondary_ips: 1 ENI, 5 secondary IPs on primary ENI
-  # For multi_eni: distribute 5 IPs across up to 3 additional ENIs (total 4 ENIs)
-  num_additional_enis = local.use_multi_eni ? 3 : 0
-  total_enis          = 1 + local.num_additional_enis
-
-  # Validation
-  eni_count_valid = local.total_enis <= local.max_enis_for_instance
-  ip_count_valid  = local.use_secondary_ips ? (5 <= local.max_ips_per_eni) : true
-
-  # Generate or use provided static IPs
-  static_ip_list = var.static_ips != null ? var.static_ips : []
-}
-
-# Validation checks
-resource "null_resource" "validate_eni_limits" {
-  count = local.eni_count_valid ? 0 : 1
-
-  provisioner "local-exec" {
-    command = "echo 'ERROR: Requested ENI count (${local.total_enis}) exceeds m6i.2xlarge limit (${local.max_enis_for_instance})' && exit 1"
-  }
-}
-
-resource "null_resource" "validate_ip_limits" {
-  count = local.ip_count_valid ? 0 : 1
-
-  provisioner "local-exec" {
-    command = "echo 'ERROR: Requested IP count exceeds per-ENI limit (${local.max_ips_per_eni})' && exit 1"
-  }
-}
-
-# Windows EC2 Instance
+# EC2 Instance
 resource "aws_instance" "windows" {
-  ami                    = data.aws_ssm_parameter.windows_2022_ami.value
+  ami                    = data.aws_ami.windows_2022.id
   instance_type          = "m6i.2xlarge"
-  subnet_id              = var.private_subnet_ids[0]
+  subnet_id              = var.subnet_id
   vpc_security_group_ids = [aws_security_group.ec2.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
+  private_ip             = var.primary_private_ip
+
+  # No public IP
+  associate_public_ip_address = false
 
   # IMDSv2 required
   metadata_options {
+    http_endpoint               = "enabled"
     http_tokens                 = "required"
     http_put_response_hop_limit = 1
-    http_endpoint               = "enabled"
+    instance_metadata_tags      = "enabled"
   }
 
   # EBS encryption
@@ -184,66 +145,54 @@ resource "aws_instance" "windows" {
   }
 
   user_data = templatefile("${path.module}/user_data.ps1", {
-    log_group_name  = aws_cloudwatch_log_group.ec2.name
-    region          = var.region
-    s3_media_bucket = var.s3_media_bucket
+    project_name = var.project_name
+    env          = var.env
   })
 
-  tags = {
+  tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-ec2"
-  }
+  })
 
-  depends_on = [
-    null_resource.validate_eni_limits,
-    null_resource.validate_ip_limits
-  ]
-}
-
-# Strategy A: Secondary IPs on primary ENI
-resource "aws_network_interface" "primary" {
-  count = local.use_secondary_ips ? 1 : 0
-
-  subnet_id       = var.private_subnet_ids[0]
-  security_groups = [aws_security_group.ec2.id]
-
-  # Assign 5 secondary private IPs
-  private_ips_count = 5
-  private_ips       = length(local.static_ip_list) == 5 ? local.static_ip_list : null
-
-  attachment {
-    instance     = aws_instance.windows.id
-    device_index = 0
-  }
-
-  tags = {
-    Name = "${var.env}-${var.project_name}-primary-eni"
+  lifecycle {
+    ignore_changes = [user_data]
   }
 }
 
-# Strategy B: Additional ENIs
-resource "aws_network_interface" "additional" {
-  count = local.use_multi_eni ? local.num_additional_enis : 0
+# Wait before assigning secondary IPs
+resource "time_sleep" "wait_for_instance" {
+  depends_on = [aws_instance.windows]
 
-  subnet_id       = var.private_subnet_ids[0]
-  security_groups = [aws_security_group.ec2.id]
+  create_duration = "30s"
+}
 
-  # Distribute IPs: 2, 2, 1 across 3 ENIs
-  private_ips_count = count.index < 2 ? 2 : 1
-  private_ips = length(local.static_ip_list) == 5 ? (
-    count.index == 0 ? [local.static_ip_list[0], local.static_ip_list[1]] :
-    count.index == 1 ? [local.static_ip_list[2], local.static_ip_list[3]] :
-    [local.static_ip_list[4]]
-  ) : null
+# Assign secondary IPs using AWS CLI (null_resource)
+resource "null_resource" "assign_secondary_ips" {
+  depends_on = [time_sleep.wait_for_instance]
 
-  tags = {
-    Name = "${var.env}-${var.project_name}-eni-${count.index + 1}"
+  triggers = {
+    instance_id   = aws_instance.windows.id
+    secondary_ips = join(",", var.secondary_ips)
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      # Get primary ENI ID
+      ENI_ID=$(aws ec2 describe-instances \
+        --instance-ids ${aws_instance.windows.id} \
+        --query 'Reservations[0].Instances[0].NetworkInterfaces[0].NetworkInterfaceId' \
+        --output text \
+        --region ${var.region})
+
+      # Assign secondary IPs with --allow-reassignment
+      aws ec2 assign-private-ip-addresses \
+        --network-interface-id $ENI_ID \
+        --private-ip-addresses ${join(" ", var.secondary_ips)} \
+        --allow-reassignment \
+        --region ${var.region}
+
+      echo "Assigned secondary IPs: ${join(", ", var.secondary_ips)}"
+    EOT
   }
 }
 
-resource "aws_network_interface_attachment" "additional" {
-  count = local.use_multi_eni ? local.num_additional_enis : 0
 
-  instance_id          = aws_instance.windows.id
-  network_interface_id = aws_network_interface.additional[count.index].id
-  device_index         = count.index + 1
-}

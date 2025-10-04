@@ -24,26 +24,28 @@ output "nat_gateway_id" {
 }
 
 output "vpc_endpoint_ssm_id" {
-  description = "SSM VPC endpoint ID"
+  description = "SSM VPC Endpoint ID"
   value       = aws_vpc_endpoint.ssm.id
 }
 
 output "vpc_endpoint_ssmmessages_id" {
-  description = "SSM Messages VPC endpoint ID"
+  description = "SSM Messages VPC Endpoint ID"
   value       = aws_vpc_endpoint.ssmmessages.id
 }
 
 output "vpc_endpoint_ec2messages_id" {
-  description = "EC2 Messages VPC endpoint ID"
+  description = "EC2 Messages VPC Endpoint ID"
   value       = aws_vpc_endpoint.ec2messages.id
 }
 
 output "vpc_endpoint_logs_id" {
-  description = "CloudWatch Logs VPC endpoint ID"
+  description = "CloudWatch Logs VPC Endpoint ID"
   value       = aws_vpc_endpoint.logs.id
 }
 
 output "vpc_endpoint_s3_id" {
-  description = "S3 Gateway VPC endpoint ID"
+  description = "S3 VPC Endpoint ID"
   value       = aws_vpc_endpoint.s3.id
 }
+
+

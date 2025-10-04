@@ -1,41 +1,61 @@
-# Terraform
+# Local .terraform directories
 **/.terraform/*
+
+# .tfstate files
 *.tfstate
 *.tfstate.*
-*.tfvars.backup
-*.tfplan
+
+# Crash log files
 crash.log
+crash.*.log
+
+# Exclude all .tfvars files, which are likely to contain sensitive data
+*.tfvars
+*.tfvars.json
+
+# Ignore override files
 override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
+
+# Ignore CLI configuration files
 .terraformrc
 terraform.rc
 
-# Go/Terratest
-terratest/go.sum
-terratest/vendor/
+# Ignore lock files (optional - some teams commit this)
+# .terraform.lock.hcl
+
+# Go vendor directory
+vendor/
+
+# Go test cache
 *.test
-*.out
 
-# Lambda artifacts
-**/lambda/*.zip
-
-# IDE
-.vscode/
+# IDE files
 .idea/
+.vscode/
 *.swp
 *.swo
 *~
 
-# OS
+# OS files
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
 
 # Logs
 *.log
 
-# Secrets
-*.pem
-*.key
-secrets.auto.tfvars
+

@@ -3,33 +3,24 @@ output "instance_id" {
   value       = aws_instance.windows.id
 }
 
-output "instance_private_ip" {
+output "private_ip" {
   description = "Primary private IP"
   value       = aws_instance.windows.private_ip
 }
 
-output "primary_eni_id" {
-  description = "Primary ENI ID"
-  value       = aws_instance.windows.primary_network_interface_id
-}
-
-output "additional_eni_ids" {
-  description = "Additional ENI IDs (if multi_eni strategy)"
-  value       = local.use_multi_eni ? aws_network_interface.additional[*].id : []
-}
-
-output "static_private_ips" {
-  description = "List of 5 static private IPs"
-  value = local.use_secondary_ips ? (
-    length(aws_network_interface.primary) > 0 ? aws_network_interface.primary[0].private_ips : []
-    ) : (
-    local.use_multi_eni ? flatten([
-      for eni in aws_network_interface.additional : eni.private_ips
-    ]) : []
-  )
+output "all_private_ips" {
+  description = "All private IPs (primary + secondary)"
+  value       = concat([aws_instance.windows.private_ip], var.secondary_ips)
 }
 
 output "security_group_id" {
-  description = "EC2 security group ID"
+  description = "Security group ID"
   value       = aws_security_group.ec2.id
 }
+
+output "iam_role_arn" {
+  description = "IAM role ARN"
+  value       = aws_iam_role.ec2.arn
+}
+
+

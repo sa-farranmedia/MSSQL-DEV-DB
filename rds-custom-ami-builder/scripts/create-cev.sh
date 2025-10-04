@@ -1,86 +1,69 @@
 #!/bin/bash
-# Create Custom Engine Version (CEV) for RDS Custom SQL Server
-
 set -e
 
-# Configuration
-REGION=${AWS_REGION:-us-east-2}
-PROJECT_NAME="legacy-wepabb"
-ENV="dev"
+echo "=========================================="
+echo "Create Custom Engine Version (CEV)"
+echo "=========================================="
 
-# AMI ID (pass as argument or read from file)
-if [ -n "$1" ]; then
-    AMI_ID="$1"
-elif [ -f "../ami-id.txt" ]; then
-    AMI_ID=$(cat ../ami-id.txt)
-else
-    echo "ERROR: No AMI ID provided"
-    echo "Usage: ./create-cev.sh <ami-id>"
-    echo "Or run create-ami.sh first to save AMI ID"
+# Prompt for AMI ID
+read -p "Enter AMI ID (e.g., ami-0123456789abcdef0): " AMI_ID
+
+if [ -z "$AMI_ID" ]; then
+    echo "ERROR: AMI ID is required"
     exit 1
 fi
 
-# CEV Configuration
-ENGINE="custom-sqlserver-ee"
-ENGINE_VERSION="15.00.4335.1.${ENV}-cev-$(date +%Y%m%d)"
-CEV_NAME="${ENV}-${PROJECT_NAME}-sqlserver-cev"
+# Generate CEV version with date
+CEV_DATE=$(date +%Y%m%d)
+CEV_VERSION="16.00.4210.1.dev-cev-${CEV_DATE}"
 
-echo "=========================================="
-echo "Creating Custom Engine Version (CEV)"
-echo "=========================================="
-echo "Engine: $ENGINE"
-echo "Engine Version: $ENGINE_VERSION"
+echo ""
+echo "CEV Version: $CEV_VERSION"
 echo "AMI ID: $AMI_ID"
-echo "Region: $REGION"
+echo "Engine: custom-sqlserver-ee"
+echo "Region: us-east-2"
 echo ""
+read -p "Create Custom Engine Version? (yes/no): " CONFIRM
 
-# Note: RDS Custom CEV creation requires specific S3 bucket setup
-# This is a simplified version - you may need additional configuration
+if [ "$CONFIRM" != "yes" ]; then
+    echo "Cancelled"
+    exit 0
+fi
 
-echo "Creating CEV..."
-echo "NOTE: This requires proper S3 bucket setup for CEV files."
-echo "If this fails, you may need to:"
-echo "  1. Create S3 bucket: ${PROJECT_NAME}-cev-files"
-echo "  2. Enable versioning on the bucket"
-echo "  3. Prepare CEV manifest files"
 echo ""
+echo "Creating Custom Engine Version..."
 
-# Uncomment and customize this command once S3 bucket is ready
-# aws rds create-custom-db-engine-version \
-#   --engine $ENGINE \
-#   --engine-version $ENGINE_VERSION \
-#   --database-installation-files-s3-bucket-name "${PROJECT_NAME}-cev-files" \
-#   --image-id $AMI_ID \
-#   --manifest file://cev-manifest.json \
-#   --region $REGION \
-#   --tags "Key=Name,Value=$CEV_NAME" "Key=Project,Value=$PROJECT_NAME" "Key=Environment,Value=$ENV"
+# Create CEV
+aws rds create-custom-db-engine-version \
+  --engine custom-sqlserver-ee \
+  --engine-version "$CEV_VERSION" \
+  --database-installation-files-s3-bucket-name "dev-sqlserver-supportfiles-backups-and-iso-files" \
+  --database-installation-files-s3-prefix "media/" \
+  --image-id "$AMI_ID" \
+  --region us-east-2
 
 echo ""
 echo "=========================================="
-echo "CEV Creation Commands"
+echo "✓ CEV creation initiated!"
 echo "=========================================="
-echo "Run these commands after setting up CEV S3 bucket:"
+echo "CEV Version: $CEV_VERSION"
 echo ""
-echo "aws rds create-custom-db-engine-version \\"
-echo "  --engine $ENGINE \\"
-echo "  --engine-version $ENGINE_VERSION \\"
-echo "  --database-installation-files-s3-bucket-name ${PROJECT_NAME}-cev-files \\"
-echo "  --image-id $AMI_ID \\"
-echo "  --region $REGION"
-echo ""
-echo "Check CEV status:"
+echo "Check CEV status with:"
 echo "aws rds describe-db-engine-versions \\"
-echo "  --engine $ENGINE \\"
-echo "  --engine-version $ENGINE_VERSION \\"
-echo "  --region $REGION"
+echo "  --engine custom-sqlserver-ee \\"
+echo "  --engine-version $CEV_VERSION \\"
+echo "  --region us-east-2"
 echo ""
+echo "CEV must show status 'available' before use"
+echo "(This typically takes 20-30 minutes)"
+echo ""
+echo "Next steps:"
+echo "1. Wait for CEV status to be 'available'"
+echo "2. Update terraform/modules/rds_custom_dev/main.tf"
+echo "3. Uncomment aws_db_instance.rds_custom resource"
+echo "4. Set engine_version = \"$CEV_VERSION\""
+echo "5. Set enable_rds_custom = true in dev.tfvars"
+echo "6. Run: terraform apply"
+echo "=========================================="
 
-# Save CEV info for later use
-cat > ../cev-info.txt <<EOF
-ENGINE=$ENGINE
-ENGINE_VERSION=$ENGINE_VERSION
-AMI_ID=$AMI_ID
-REGION=$REGION
-EOF
 
-echo "CEV info saved to: ../cev-info.txt"
