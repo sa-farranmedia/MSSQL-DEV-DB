@@ -1,3 +1,8 @@
+data "aws_ssm_parameter" "db_master_password" {
+  name            = var.db_master_password_param_name
+  with_decryption = true
+}
+
 # Security Group for RDS Custom
 resource "aws_security_group" "rds_custom" {
   name        = "${var.env}-${var.project_name}-rds-sg"
@@ -35,58 +40,55 @@ resource "aws_db_subnet_group" "rds_custom" {
   })
 }
 
-# IAM Role for RDS Custom
 resource "aws_iam_role" "rds_custom" {
-  name = "${var.env}-${var.project_name}-rds-custom-role"
-
+  name = "AWSRDSCustomSQLServerRole-${var.env}"
   assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-      }
-    ]
+    Version   = "2012-10-17",
+    Statement = [{
+      Effect    = "Allow",
+      Principal = { Service = "ec2.amazonaws.com" },
+      Action    = "sts:AssumeRole"
+    }]
   })
-
-  tags = merge(var.tags, {
-    Name = "${var.env}-${var.project_name}-rds-custom-role"
-  })
+  tags = var.tags
 }
-
-# Attach RDS Custom Service Role Policy
-resource "aws_iam_role_policy_attachment" "rds_custom_service" {
+## Required policies for the EC2 host that backs RDS Custom
+resource "aws_iam_role_policy_attachment" "rds_custom_instance_profile_policy" {
   role       = aws_iam_role.rds_custom.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSCustomSQLServerIamRolePolicy"
+  policy_arn = "arn:aws:iam::aws:policy/AmazonRDSCustomInstanceProfileRolePolicy"
 }
-
+resource "aws_iam_role_policy_attachment" "ssm_core" {
+  role       = aws_iam_role.rds_custom.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
 # Instance Profile for RDS Custom
-resource "aws_iam_instance_profile" "rds_custom" {
-  name = "${var.env}-${var.project_name}-rds-custom-profile"
-  role = aws_iam_role.rds_custom.name
 
-  tags = merge(var.tags, {
+resource "aws_iam_instance_profile" "rds_custom" {
+  # MUST begin with AWSRDSCustom*
+  name = "AWSRDSCustomSQLServerInstanceProfile-${var.env}"
+  role = aws_iam_role.rds_custom.name
+    tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-rds-custom-profile"
   })
 }
-
 # RDS Custom DB Instance
 # NOTE: Comment this out until CEV is created and registered
 # Uncomment after running rds-custom-ami-builder workflow
 
 resource "aws_db_instance" "rds_custom" {
   identifier     = "${var.env}-${var.project_name}-rds-custom"
-  engine         = "custom-sqlserver-ee"
-  engine_version = "16.00.4210.1.dev-cev-20251004"  # Update with your CEV version
-  license_model  = "bring-your-own-license"
+  engine         = "custom-sqlserver-we"
+  engine_version = @REPLACEME # Update with your CEV version
+  auto_minor_version_upgrade  = false
 
   instance_class    = var.instance_class
   allocated_storage = var.allocated_storage
   storage_type      = "gp3"
   storage_encrypted = true
+
+  username            = var.db_master_username
+  password            = data.aws_ssm_parameter.db_master_password.value
+  kms_key_id          = aws_kms_key.rds_custom.arn
 
   db_subnet_group_name   = aws_db_subnet_group.rds_custom.name
   vpc_security_group_ids = [aws_security_group.rds_custom.id]

@@ -1,10 +1,6 @@
-<<<<<<< Updated upstream
-# DEV Legacy WEBAPP Infrastructure - Operator Guide
-=======
 # Legacy WebApp - DEV Infrastructure
 
 Complete Terraform infrastructure for DEV environment with Windows Server 2022 EC2 (SQL tooling only) and RDS Custom for SQL Server Developer Edition.
->>>>>>> Stashed changes
 
 ## Overview
 
@@ -60,12 +56,9 @@ aws s3 cp sqlserver2022-kb5041321-x64_1b40129fb51df67f28feb2a1ea139044c611b93f.e
 
 ## Quick Start
 
-### 1. Extract Files
+### 1. Chmod Files
 
 ```bash
-# Extract all files from artifact
-python extract_artifact.py terraform_artifact.txt
-
 # Set executable permissions on scripts
 chmod +x rds-custom-ami-builder/scripts/*.sh
 ```
@@ -279,7 +272,7 @@ Ensure:
 
 ### RDS Custom Won't Start
 
-1. Check CEV status: `aws rds describe-db-engine-versions --engine custom-sqlserver-ee`
+1. Check CEV status: `aws rds describe-db-engine-versions --engine custom-sqlserver-we`
 2. Verify S3 media bucket is accessible
 3. Check CloudWatch logs for SQL Server service errors
 4. Ensure NT AUTHORITY\SYSTEM has sysadmin role

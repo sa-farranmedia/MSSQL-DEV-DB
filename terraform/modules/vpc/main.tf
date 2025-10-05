@@ -179,32 +179,6 @@ resource "aws_vpc_endpoint" "ec2messages" {
   })
 }
 
-# VPC Endpoint for CloudWatch Logs
-resource "aws_vpc_endpoint" "logs" {
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.logs"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
-  private_dns_enabled = true
-
-  tags = merge(var.tags, {
-    Name = "${var.env}-${var.project_name}-logs-vpce"
-  })
-}
-
-# VPC Endpoint for S3 (Gateway)
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id            = aws_vpc.main.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
-  vpc_endpoint_type = "Gateway"
-  route_table_ids   = concat([aws_route_table.private.id], [aws_route_table.public.id])
-
-  tags = merge(var.tags, {
-    Name = "${var.env}-${var.project_name}-s3-vpce"
-  })
-}
-
 data "aws_region" "current" {}
 
 

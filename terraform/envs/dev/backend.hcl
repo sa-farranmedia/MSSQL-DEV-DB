@@ -1,8 +1,4 @@
-bucket = "dev-sqlserver-supportfiles-backups-and-iso-files"
+bucket = "dev-legacy-webapp-state-db-and-ec2"
 key    = "tfstate/dev/infra.tfstate"
 region = "us-east-2"
-
-# Optional: Add DynamoDB table for state locking
-# dynamodb_table = "terraform-state-lock"
-
 

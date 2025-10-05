@@ -112,4 +112,9 @@ variable "rds_allocated_storage" {
   default     = 900
 }
 
+variable "custom_rds_username" {
+  type        = string
+  description = "Master username for RDS Custom SQL Server"
+  default     = "sqladmin"
+}
 

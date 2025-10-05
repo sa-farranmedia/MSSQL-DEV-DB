@@ -13,26 +13,20 @@ provider "aws" {
   region = var.region
 }
 
-# Data: Latest Windows Server 2019 AMI (RDS Custom compatible)
+# Data: Windows Server 2019 + SQL Server 2022 Web (License-Included) AMI
 data "aws_ami" "windows_2019" {
   most_recent = true
   owners      = ["amazon"]
 
   filter {
     name   = "name"
-    values = ["Windows_Server-2019-English-Full-Base-*"]
+    values = ["Windows_Server-2019-English-Full-SQL_2022_Web-*"]
   }
 
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
   }
-}
-
-# Data: Get SA password from SSM Parameter Store
-data "aws_ssm_parameter" "sa_password" {
-  name            = var.sa_password_ssm_path
-  with_decryption = true
 }
 
 # Security Group for Builder Instance
@@ -92,54 +86,9 @@ resource "aws_iam_role" "builder" {
   }
 }
 
-# Attach SSM policy
-resource "aws_iam_role_policy_attachment" "builder_ssm" {
+resource "aws_iam_role_policy_attachment" "builder_ssm_core" {
   role       = aws_iam_role.builder.name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-# Attach CloudWatch policy
-resource "aws_iam_role_policy_attachment" "builder_cloudwatch" {
-  role       = aws_iam_role.builder.name
-  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
-}
-
-# Custom policy for S3 and SSM Parameter Store
-resource "aws_iam_role_policy" "builder_custom" {
-  name = "${var.env}-${var.project_name}-ami-builder-custom-policy"
-  role = aws_iam_role.builder.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          "arn:aws:s3:::${var.s3_media_bucket}",
-          "arn:aws:s3:::${var.s3_media_bucket}/*"
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ssm:GetParameter",
-          "ssm:GetParameters"
-        ]
-        Resource = "arn:aws:ssm:${var.region}:*:parameter${var.sa_password_ssm_path}"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "kms:Decrypt"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
 }
 
 # Instance Profile
@@ -163,7 +112,7 @@ resource "aws_instance" "builder" {
   iam_instance_profile   = aws_iam_instance_profile.builder.name
 
   # No public IP needed with SSM
-  associate_public_ip_address = false
+  associate_public_ip_address = var.builder_public
 
   # Larger root volume for SQL Server
   root_block_device {
@@ -173,12 +122,6 @@ resource "aws_instance" "builder" {
     delete_on_termination = true
   }
 
-  user_data = templatefile("${path.module}/install-sql-server.ps1", {
-    s3_bucket   = var.s3_media_bucket
-    sql_iso_key = var.sql_iso_key
-    sql_cu_key  = var.sql_cu_key
-    sa_password = data.aws_ssm_parameter.sa_password.value
-  })
 
   tags = {
     Name    = "${var.env}-${var.project_name}-ami-builder"
@@ -186,9 +129,60 @@ resource "aws_instance" "builder" {
     project = var.project_name
     purpose = "RDS Custom AMI Builder"
   }
+}
 
-  lifecycle {
-    ignore_changes = [user_data]
+# Optional: SSM Interface VPC Endpoints for private builds (toggle with var.create_ssm_endpoints)
+resource "aws_security_group" "vpce_ssm" {
+  count       = var.create_ssm_endpoints ? 1 : 0
+  name        = "${var.env}-${var.project_name}-vpce-ssm-sg"
+  description = "VPCE SG for SSM endpoints (allow 443 from builder SG)"
+  vpc_id      = data.aws_vpc.default.id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name    = "${var.env}-${var.project_name}-vpce-ssm-sg"
+    env     = var.env
+    project = var.project_name
+  }
+}
+
+# Allow HTTPS from builder SG to the VPCE SG (provider v5 pattern)
+resource "aws_vpc_security_group_ingress_rule" "vpce_https_from_builder" {
+  count                         = var.create_ssm_endpoints ? 1 : 0
+  security_group_id             = aws_security_group.vpce_ssm[0].id
+  ip_protocol                   = "tcp"
+  from_port                     = 443
+  to_port                       = 443
+  referenced_security_group_id  = aws_security_group.builder.id
+}
+
+locals {
+  ssm_services = var.create_ssm_endpoints ? [
+    "ssm",
+    "ssmmessages",
+    "ec2messages"
+  ] : []
+}
+
+resource "aws_vpc_endpoint" "ssm" {
+  for_each            = toset(local.ssm_services)
+  vpc_id              = data.aws_vpc.default.id
+  service_name        = "com.amazonaws.${var.region}.${each.key}"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = data.aws_subnets.default.ids
+  security_group_ids  = [aws_security_group.vpce_ssm[0].id]
+  private_dns_enabled = true
+
+  tags = {
+    Name    = "${var.env}-${var.project_name}-vpce-${each.key}"
+    env     = var.env
+    project = var.project_name
   }
 }
 
@@ -204,4 +198,11 @@ resource "aws_cloudwatch_log_group" "builder" {
   }
 }
 
+output "builder_instance_id" {
+  value = aws_instance.builder.id
+}
 
+output "builder_public_ip" {
+  value       = aws_instance.builder.public_ip
+  description = "Public IP present only when var.builder_public = true"
+}

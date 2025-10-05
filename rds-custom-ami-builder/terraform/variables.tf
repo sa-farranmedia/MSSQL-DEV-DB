@@ -16,25 +16,19 @@ variable "region" {
   default     = "us-east-2"
 }
 
-variable "s3_media_bucket" {
-  description = "S3 bucket containing SQL Server media"
+variable "li_ami_ssm_param" {
+  description = "SSM parameter for LI AMI (WS2019 + SQL edition)"
   type        = string
+  default     = "/aws/service/ami-windows-latest/Windows_Server-2019-English-Full-SQL_2022_Web"
+}
+variable "builder_public" {
+  description = "If true, assign a public IP for the builder (uses Internet path for SSM). If false, create SSM VPCEs and keep private."
+  type        = bool
+  default     = true
 }
 
-variable "sql_iso_key" {
-  description = "S3 key for SQL Server ISO"
-  type        = string
+variable "create_ssm_endpoints" {
+  description = "Create Interface VPC Endpoints (ssm, ssmmessages, ec2messages) in the default VPC for private SSM access. Ignored when builder_public = true unless explicitly set."
+  type        = bool
+  default     = false
 }
-
-variable "sql_cu_key" {
-  description = "S3 key for SQL Server Cumulative Update"
-  type        = string
-}
-
-variable "sa_password_ssm_path" {
-  description = "SSM Parameter Store path for SA password"
-  type        = string
-  default     = "/dev/legacy-webapp/rds/sa-password"
-}
-
-

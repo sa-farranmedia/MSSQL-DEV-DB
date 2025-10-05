@@ -6,7 +6,7 @@ echo "Deploy RDS Custom Instance"
 echo "=========================================="
 
 # Prompt for CEV version
-read -p "Enter CEV version (e.g., 16.00.4210.1.dev-cev-20250103): " CEV_VERSION
+read -p "Enter CEV version (e.g., 16.00.4195.2.dev-cev-20250103): " CEV_VERSION
 
 if [ -z "$CEV_VERSION" ]; then
     echo "ERROR: CEV version is required"
@@ -18,7 +18,7 @@ echo "Checking CEV status..."
 
 # Check if CEV exists and is available
 CEV_STATUS=$(aws rds describe-db-engine-versions \
-  --engine custom-sqlserver-ee \
+  --engine custom-sqlserver-we \
   --engine-version "$CEV_VERSION" \
   --region us-east-2 \
   --query 'DBEngineVersions[0].Status' \

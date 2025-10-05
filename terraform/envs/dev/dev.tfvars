@@ -24,12 +24,14 @@ enable_rds_custom = true
 enable_scheduler  = true
 
 # SSM Access Control
-ssm_allowed_iam_usernames = ["dev-brandon-leal"]
+ssm_allowed_iam_usernames = ["dev-brandon-leal","dev-nick-avaneas","dev-brandon-jerrell"]
 
 # S3 Media Bucket
 s3_media_bucket = "dev-sqlserver-supportfiles-backups-and-iso-files"
 sql_iso_key     = "media/SQLServer2022-x64-ENU-Dev.iso"
 sql_cu_key      = "media/sqlserver2022-kb5041321-x64_1b40129fb51df67f28feb2a1ea139044c611b93f.exe"
+
+custom_rds_username = "sqladmin"
 
 # RDS Instance Configuration
 rds_instance_class    = "db.m5.xlarge"

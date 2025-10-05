@@ -13,7 +13,7 @@ module "vpc" {
 }
 
 # Windows EC2 Module
-module "windows_ec2" {
+# Data: Windows Server 2019 + SQL Server 2022 Standard (License-Included) AMI
   source = "./modules/windows_ec2"
 
   project_name = var.project_name
@@ -29,11 +29,6 @@ module "windows_ec2" {
   ssm_allowed_users   = var.ssm_allowed_iam_usernames
 
   tags = local.common_tags
-}
-
-# RDS Custom Module (conditional)
-module "rds_custom" {
-  source = "./modules/rds_custom_dev"
   count  = var.enable_rds_custom ? 1 : 0
 
   project_name = var.project_name
@@ -46,6 +41,7 @@ module "rds_custom" {
   instance_class        = var.rds_instance_class
   allocated_storage     = var.rds_allocated_storage
   enable_scheduler      = var.enable_scheduler
+  db_master_username    = var.custom_rds_username
 
   tags = local.common_tags
 }
