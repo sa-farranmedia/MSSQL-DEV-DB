@@ -48,4 +48,12 @@ output "vpc_endpoint_s3_id" {
   value       = aws_vpc_endpoint.s3.id
 }
 
+output "ssm_vpce_id"            { value = aws_vpc_endpoint.ssm.id }
+output "ssmmessages_vpce_id"    { value = aws_vpc_endpoint.ssmmessages.id }
+output "ec2messages_vpce_id"    { value = aws_vpc_endpoint.ec2messages.id }
+output "logs_vpce_id"           { value = aws_vpc_endpoint.logs.id }
+output "events_vpce_id"         { value = aws_vpc_endpoint.events.id }
+output "monitoring_vpce_id"     { value = aws_vpc_endpoint.monitoring.id }
+output "secretsmanager_vpce_id" { value = aws_vpc_endpoint.secretsmanager.id }
+output "s3_gateway_vpce_id"     { value = data.aws_vpc_endpoint.s3_gateway.id }
 

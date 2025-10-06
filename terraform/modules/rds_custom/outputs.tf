@@ -14,21 +14,10 @@ output "address" {
   description = "RDS Custom address"
   value       = aws_db_instance.rds_custom.address
 }
-#
-# output "db_instance_id" {
-#   description = "RDS Custom instance ID (placeholder until instance created)"
-#   value       = "${var.env}-${var.project_name}-rds-custom"
-# }
-#
-# output "endpoint" {
-#   description = "RDS Custom endpoint (placeholder until instance created)"
-#   value       = "CREATE RDS INSTANCE FIRST"
-# }
-#
-# output "address" {
-#   description = "RDS Custom address (placeholder until instance created)"
-#   value       = "CREATE RDS INSTANCE FIRST"
-# }
+output "rds_sg_id" {
+  description = "Security Group ID used by the RDS Custom instance"
+  value       = aws_security_group.rds_custom.id
+}
 
 output "security_group_id" {
   description = "RDS security group ID"

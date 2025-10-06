@@ -137,46 +137,28 @@ resource "aws_security_group" "vpc_endpoints" {
   })
 }
 
-# VPC Endpoint for SSM
-resource "aws_vpc_endpoint" "ssm" {
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.ssm"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
-  private_dns_enabled = true
+resource "aws_security_group" "vpce_ssm" {
+  name        = "${var.env}-${var.project_name}-vpce-ssm-sg"
+  description = "Allow 443 from RDS Custom DB to SSM VPCEs"
+  vpc_id      = aws_vpc.main.id
 
-  tags = merge(var.tags, {
-    Name = "${var.env}-${var.project_name}-ssm-vpce"
-  })
-}
+  ingress {
+    description     = "DB SG to VPCEs on 443"
+    from_port       = 443
+    to_port         = 443
+    protocol        = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
 
-# VPC Endpoint for SSM Messages
-resource "aws_vpc_endpoint" "ssmmessages" {
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.ssmmessages"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
-  private_dns_enabled = true
+  egress {
+    description = "All egress"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
-  tags = merge(var.tags, {
-    Name = "${var.env}-${var.project_name}-ssmmessages-vpce"
-  })
-}
-
-# VPC Endpoint for EC2 Messages
-resource "aws_vpc_endpoint" "ec2messages" {
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.ec2messages"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
-  private_dns_enabled = true
-
-  tags = merge(var.tags, {
-    Name = "${var.env}-${var.project_name}-ec2messages-vpce"
-  })
+  tags = merge(var.tags, { Name = "${var.env}-${var.project_name}-vpce-ssm" })
 }
 
 data "aws_region" "current" {}

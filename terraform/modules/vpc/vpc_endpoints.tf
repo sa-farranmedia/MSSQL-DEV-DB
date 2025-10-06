@@ -1,10 +1,10 @@
-
 locals {
   private_subnet_ids = aws_subnet.private[*].id  # or replace with your data source
   vpce_sg_id         = aws_security_group.vpc_endpoints.id
   vpc_id             = aws_vpc.main.id
   region             = data.aws_region.current.name
 }
+
 
 # Secrets Manager
 resource "aws_vpc_endpoint" "secretsmanager" {
@@ -15,28 +15,6 @@ resource "aws_vpc_endpoint" "secretsmanager" {
   security_group_ids  = [local.vpce_sg_id]
   private_dns_enabled = true
   tags = merge(var.tags, { Name = "${var.env}-${var.project_name}-vpce-secretsmanager" })
-}
-
-# CloudWatch Monitoring (metrics)
-resource "aws_vpc_endpoint" "monitoring" {
-  vpc_id              = local.vpc_id
-  service_name        = "com.amazonaws.${local.region}.monitoring"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = local.private_subnet_ids
-  security_group_ids  = [local.vpce_sg_id]
-  private_dns_enabled = true
-  tags = merge(var.tags, { Name = "${var.env}-${var.project_name}-vpce-monitoring" })
-}
-
-# EventBridge / CloudWatch Events
-resource "aws_vpc_endpoint" "events" {
-  vpc_id              = local.vpc_id
-  service_name        = "com.amazonaws.${local.region}.events"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = local.private_subnet_ids
-  security_group_ids  = [local.vpce_sg_id]
-  private_dns_enabled = true
-  tags = merge(var.tags, { Name = "${var.env}-${var.project_name}-vpce-events" })
 }
 
 # EC2 (control-plane APIs RDS Custom touches)
@@ -50,7 +28,30 @@ resource "aws_vpc_endpoint" "ec2" {
   tags = merge(var.tags, { Name = "${var.env}-${var.project_name}-vpce-ec2" })
 }
 
-# EC2Messages (used by SSM agent)
+resource "aws_vpc_endpoint" "ssm" {
+  vpc_id              = local.vpc_id
+  service_name        = "com.amazonaws.${local.region}.ssm"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = local.private_subnet_ids
+  security_group_ids  = [local.vpce_sg_id]
+  private_dns_enabled = true
+  tags = merge(var.tags, {
+    Name = "${var.env}-${var.project_name}-vpce-ssm"
+  })
+}
+
+resource "aws_vpc_endpoint" "ssmmessages" {
+  vpc_id              = local.vpc_id
+  service_name        = "com.amazonaws.${local.region}.ssmmessages"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = local.private_subnet_ids
+  security_group_ids  = [local.vpce_sg_id]
+  private_dns_enabled = true
+  tags = merge(var.tags, {
+    Name = "${var.env}-${var.project_name}-vpce-ssmmessages"
+  })
+}
+
 resource "aws_vpc_endpoint" "ec2messages" {
   vpc_id              = local.vpc_id
   service_name        = "com.amazonaws.${local.region}.ec2messages"
@@ -58,34 +59,66 @@ resource "aws_vpc_endpoint" "ec2messages" {
   subnet_ids          = local.private_subnet_ids
   security_group_ids  = [local.vpce_sg_id]
   private_dns_enabled = true
-  tags = merge(var.tags, { Name = "${var.env}-${var.project_name}-vpce-ec2messages" })
+  tags = merge(var.tags, {
+    Name = "${var.env}-${var.project_name}-vpce-ec2messages"
+  })
 }
-# NOTE: You should already have these; keep them:
-#   - ssm, ssmmessages, logs (Interface), and s3 (Gateway)
-# If you later flip to Multi-AZ, also add: aws_vpc_endpoint.sqs (Interface).
-
-# VPC Endpoint for CloudWatch Logs
 resource "aws_vpc_endpoint" "logs" {
-  vpc_id              = aws_vpc.main.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.logs"
+  vpc_id              = local.vpc_id
+  service_name        = "com.amazonaws.${local.region}.logs"
   vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.vpc_endpoints.id]
+  subnet_ids          = local.private_subnet_ids
+  security_group_ids  = [local.vpce_sg_id]
+  private_dns_enabled = true
+  tags = merge(var.tags, {
+    Name = "${var.env}-${var.project_name}-vpce-logs"
+  })
+}
+
+resource "aws_vpc_endpoint" "events" {
+  vpc_id              = local.vpc_id
+  service_name        = "com.amazonaws.${local.region}.events"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = local.private_subnet_ids
+  security_group_ids  = [local.vpce_sg_id]
+  private_dns_enabled = true
+  tags = merge(var.tags, {
+    Name = "${var.env}-${var.project_name}-vpce-events"
+  })
+}
+
+resource "aws_vpc_endpoint" "monitoring" {
+  vpc_id              = local.vpc_id
+  service_name        = "com.amazonaws.${local.region}.monitoring"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = local.private_subnet_ids
+  security_group_ids  = [local.vpce_sg_id]
   private_dns_enabled = true
 
   tags = merge(var.tags, {
-    Name = "${var.env}-${var.project_name}-logs-vpce"
+    Name = "${var.env}-${var.project_name}-vpce-monitoring"
   })
 }
 
-# VPC Endpoint for S3 (Gateway)
 resource "aws_vpc_endpoint" "s3" {
-  vpc_id            = aws_vpc.main.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  vpc_id            = local.vpc_id
+  service_name      = "com.amazonaws.${local.region}.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = concat([aws_route_table.private.id], [aws_route_table.public.id])
+  route_table_ids   = data.aws_route_tables.private_rts.ids
 
   tags = merge(var.tags, {
-    Name = "${var.env}-${var.project_name}-s3-vpce"
+    Name = "${var.env}-${var.project_name}-vpce-s3"
   })
+}
+
+data "aws_vpc_endpoint" "s3_gateway" {
+  id = aws_vpc_endpoint.s3.id
+}
+data "aws_route_tables" "private_rts" {
+  vpc_id = local.vpc_id
+
+  filter {
+    name   = "association.subnet-id"
+    values = local.private_subnet_ids
+  }
 }

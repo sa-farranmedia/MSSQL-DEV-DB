@@ -110,7 +110,7 @@ resource "aws_instance" "builder" {
   subnet_id              = data.aws_subnets.default.ids[0]
   vpc_security_group_ids = [aws_security_group.builder.id]
   iam_instance_profile   = aws_iam_instance_profile.builder.name
-
+  key_name = var.key_name
   # No public IP needed with SSM
   associate_public_ip_address = var.builder_public
 
@@ -137,7 +137,13 @@ resource "aws_security_group" "vpce_ssm" {
   name        = "${var.env}-${var.project_name}-vpce-ssm-sg"
   description = "VPCE SG for SSM endpoints (allow 443 from builder SG)"
   vpc_id      = data.aws_vpc.default.id
-
+  ingress {
+    description = "HTTPS from VPC CIDR"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [data.vpc_cidr]  # ← Change to CIDR instead of security group
+  }
   egress {
     from_port   = 0
     to_port     = 0

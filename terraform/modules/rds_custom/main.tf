@@ -3,6 +3,31 @@ data "aws_ssm_parameter" "db_master_password" {
   with_decryption = true
 }
 
+data "aws_vpc_endpoint" "ssm" {
+  id = var.vpc.ssm_vpce_id
+}
+data "aws_vpc_endpoint" "ssmmessages" {
+  id = var.vpc.ssmmessages_vpce_id
+}
+data "aws_vpc_endpoint" "ec2messages" {
+  id = var.vpc.ec2messages_vpce_id
+}
+data "aws_vpc_endpoint" "logs" {
+  id = var.vpc.logs_vpce_id
+}
+data "aws_vpc_endpoint" "events" {
+  id = var.vpc.events_vpce_id
+}
+data "aws_vpc_endpoint" "monitoring" {
+  id = var.vpc.monitoring_vpce_id
+}
+data "aws_vpc_endpoint" "secretsmanager" {
+  id = var.vpc.secretsmanager_vpce_id
+}
+data "aws_vpc_endpoint" "s3_gateway" {
+  id = var.vpc.s3_gateway_vpce_id
+}
+
 # Security Group for RDS Custom
 resource "aws_security_group" "rds_custom" {
   name        = "${var.env}-${var.project_name}-rds-sg"
@@ -77,8 +102,8 @@ resource "aws_iam_instance_profile" "rds_custom" {
 
 resource "aws_db_instance" "rds_custom" {
   identifier     = "${var.env}-${var.project_name}-rds-custom"
-  engine         = "custom-sqlserver-we"
-  engine_version = @REPLACEME # Update with your CEV version
+  engine         = "custom-sqlserver-web"
+  engine_version = "16.00.4195.2.dev-cev-20251005"  # matches your created CEV
   auto_minor_version_upgrade  = false
 
   instance_class    = var.instance_class
@@ -106,7 +131,16 @@ resource "aws_db_instance" "rds_custom" {
 
   # CloudWatch Logs exports (version dependent - may need adjustment)
   # enabled_cloudwatch_logs_exports = ["error", "agent"]
-
+  depends_on = [
+    data.aws_vpc_endpoint.ssm,
+    data.aws_vpc_endpoint.ssmmessages,
+    data.aws_vpc_endpoint.ec2messages,
+    data.aws_vpc_endpoint.logs,
+    data.aws_vpc_endpoint.events,
+    data.aws_vpc_endpoint.monitoring,
+    data.aws_vpc_endpoint.secretsmanager,
+    data.aws_vpc_endpoint.s3_gateway
+  ]
   tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-rds-custom"
   })
@@ -328,5 +362,3 @@ resource "aws_lambda_permission" "allow_eventbridge_stop_weekend" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.stop_weekend[0].arn
 }
-
-

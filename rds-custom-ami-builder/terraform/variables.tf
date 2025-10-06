@@ -32,3 +32,7 @@ variable "create_ssm_endpoints" {
   type        = bool
   default     = false
 }
+variable "key_name" {
+  type        = string
+  description = "EC2 key pair name for Windows password decrypt"
+}

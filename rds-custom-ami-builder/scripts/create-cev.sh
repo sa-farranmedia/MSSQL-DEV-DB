@@ -18,18 +18,31 @@ REGION="${REGION:-$(aws configure get region 2>/dev/null || echo us-east-2)}"
 AMI_NAME=$(aws ec2 describe-images --region "$REGION" --image-ids "$AMI_ID" \
   --query 'Images[0].Name' --output text 2>/dev/null || echo "Unknown")
 
+AMI_STATE=$(aws ec2 describe-images --region "$REGION" --image-ids "$AMI_ID" \
+  --query 'Images[0].State' --output text 2>/dev/null || echo "unknown")
+if [[ "$AMI_STATE" != "available" ]]; then
+  echo "AMI state is '$AMI_STATE' — waiting until 'available'..."
+  while true; do
+    AMI_STATE=$(aws ec2 describe-images --region "$REGION" --image-ids "$AMI_ID" \
+      --query 'Images[0].State' --output text)
+    [[ "$AMI_STATE" == "failed" ]] && { echo "ERROR: AMI entered 'failed' state"; exit 1; }
+    [[ "$AMI_STATE" == "available" ]] && break
+    sleep 15
+  done
+fi
+
 # Infer engine from AMI name; fallback to prompt if unrecognized
 ENGINE=""
 EDITION=""
 case "$AMI_NAME" in
-  *SQL_2022_Web*|*SQL_2019_Web*)          ENGINE="custom-sqlserver-we"; EDITION="Web" ;;
+  *SQL_2022_Web*|*SQL_2019_Web*)          ENGINE="custom-sqlserver-web"; EDITION="Web" ;;
   *SQL_2022_Standard*|*SQL_2019_Standard*)ENGINE="custom-sqlserver-se"; EDITION="Standard" ;;
   *SQL_2022_Enterprise*|*SQL_2019_Enterprise*) ENGINE="custom-sqlserver-ee"; EDITION="Enterprise" ;;
   *)
     echo "Could not infer SQL edition from AMI name: $AMI_NAME"
-    read -rp "Enter engine (custom-sqlserver-we | custom-sqlserver-se | custom-sqlserver-ee): " ENGINE
+    read -rp "Enter engine (custom-sqlserver-web | custom-sqlserver-se | custom-sqlserver-ee): " ENGINE
     case "$ENGINE" in
-      custom-sqlserver-we) EDITION="Web" ;;
+      custom-sqlserver-web) EDITION="Web" ;;
       custom-sqlserver-se) EDITION="Standard" ;;
       custom-sqlserver-ee) EDITION="Enterprise" ;;
       *) echo "ERROR: Invalid engine selection"; exit 1 ;;
@@ -38,7 +51,7 @@ case "$AMI_NAME" in
  esac
 
 # Warn if not WS2019 (RDS Custom CEV requires Windows Server 2019)
-if [[ "$AMI_NAME" != *"Windows_Server-2019"* ]]; then
+if [[ "$AMI_NAME" != *"Windows_Server-2019"* && "$AMI_NAME" != *"ws2019"* && "$AMI_NAME" != *"WS2019"* ]]; then
   echo "WARNING: AMI name does not indicate Windows_Server-2019: $AMI_NAME"
   read -rp "Continue anyway? (yes/no): " CONT
   [[ "$CONT" == "yes" ]] || exit 1

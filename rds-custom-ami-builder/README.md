@@ -103,7 +103,7 @@ bash create-cev.sh
 ### 5) Deploy RDS Custom from the CEV
 In your RDS module variables (or resource):
 ```
-engine         = "custom-sqlserver-we"   # or -se / -ee to match your AMI
+engine         = "custom-sqlserver-web"   # or -se / -ee to match your AMI
 engine_version = "16.00.4195.2.dev-cev-YYYYMMDD"
 ```
 Then apply your infra as usual.
@@ -130,10 +130,6 @@ rds-custom-ami-builder/
     ├── create-cev.sh            # Create CEV from AMI (engine must match edition)
     └── deploy-rds-custom.sh     # Apply DB from CEV
 ```
-
-> **Removed BYOM pieces:** no S3 ISO/CU, no SA password SSM param, and no `install-sql-server.ps1` in user_data. The LI AMI already includes SQL Server.
-
----
 
 ## Troubleshooting
 
