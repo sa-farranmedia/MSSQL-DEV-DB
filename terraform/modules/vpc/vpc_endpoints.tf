@@ -104,23 +104,13 @@ resource "aws_vpc_endpoint" "s3" {
   vpc_id            = local.vpc_id
   service_name      = "com.amazonaws.${local.region}.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = [aws_route_table.private.id]
-  security_group_ids  = [local.vpce_sg_id]
+  route_table_ids   = aws_route_table.private[*].id
+
   tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-vpce-s3"
   })
 }
 
-resource "aws_vpc_endpoint" "s3_gateway" {
-  vpc_id            = aws_vpc.main.id
-   service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
-   vpc_endpoint_type = "Gateway"
-    security_group_ids  = [local.vpce_sg_id]
-  route_table_ids = [aws_route_table.private.id]
-  tags = merge(var.tags, {
-    Name = "${var.env}-${var.project_name}-vpce-s3"
-  })
- }
 
 data "aws_route_tables" "private_rts" {
   vpc_id = local.vpc_id

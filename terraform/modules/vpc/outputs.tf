@@ -55,9 +55,10 @@ output "logs_vpce_id"           { value = aws_vpc_endpoint.logs.id }
 output "events_vpce_id"         { value = aws_vpc_endpoint.events.id }
 output "monitoring_vpce_id"     { value = aws_vpc_endpoint.monitoring.id }
 output "secretsmanager_vpce_id" { value = aws_vpc_endpoint.secretsmanager.id }
-output "s3_gateway_vpce_id"     { value = aws_vpc_endpoint.s3_gateway.id }
+output "s3_gateway_vpce_id" { value = aws_vpc_endpoint.s3.id }
 
 output "private_route_table_ids" {
- value = [aws_route_table.private.id]
+  description = "Route table IDs for private subnets"
+  value       = aws_route_table.private[*].id
 }
 
