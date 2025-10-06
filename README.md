@@ -84,6 +84,25 @@ cd ../scripts
 # After CEV is available, enable RDS Custom in main infrastructure
 ```
 
+#### 2.5 Network Preflight (RDS Custom)
+
+Before you enable **RDS Custom**, make sure the private VPC has everything it needs so the first-boot orchestration can talk to AWS services **without** the public internet:
+
+- **Interface VPC Endpoints (Private DNS = true):**
+  - `com.amazonaws.<region>.ssm`
+  - `com.amazonaws.<region>.ssmmessages`
+  - `com.amazonaws.<region>.ec2messages`
+  - `com.amazonaws.<region>.logs`
+  - `com.amazonaws.<region>.events`
+  - `com.amazonaws.<region>.monitoring`
+  - `com.amazonaws.<region>.secretsmanager`
+- **Gateway VPC Endpoint (Route Tables attached to the *private* subnets):**
+  - `com.amazonaws.<region>.s3`
+- **Security Group for VPCEs** allows inbound/outbound **TCP 443** from the VPC CIDR (or from the RDS SG if you prefer least-privilege).
+- **VPC DNS** is enabled (both `enableDnsSupport` and `enableDnsHostnames`).
+
+> Why: RDS Custom needs SSM/EC2Messages/Logs/Events/Monitoring/Secrets Manager and S3 during bootstrap. If those paths aren’t reachable in your private subnets, the DB lands in `incompatible-network`.
+
 ### 3. Deploy Main Infrastructure
 
 ```bash
@@ -99,17 +118,28 @@ terraform plan -var-file=envs/dev/dev.tfvars
 terraform apply -var-file=envs/dev/dev.tfvars
 ```
 
-### 4. Verify with Terratest
+### 3.1 Enable RDS Custom (after CEV)
 
-```bash
-cd terratest
+1. Confirm your **Custom Engine Version** exists and note the exact engine **identifier** your CEV was registered under:
+   ```bash
+   aws rds describe-db-engine-versions \
+     --engine custom-sqlserver-we \
+     --query 'DBEngineVersions[].{Engine:Engine,Version:EngineVersion,Status:Status}' \
+     --region us-east-2
+   ```
+   > If you used `custom-sqlserver-web` instead of `custom-sqlserver-we`, keep that exact string consistent between the CEV and your Terraform `aws_db_instance.engine`.
 
-# Initialize Go modules
-go mod download
+2. Flip the flag in `envs/dev/dev.tfvars`:
+   ```hcl
+   enable_rds_custom = true
+   ```
 
-# Run tests
-go test -v -timeout 30m
-```
+3. **Apply** again:
+   ```bash
+   terraform apply -var-file=envs/dev/dev.tfvars
+   ```
+
+**Tip:** If you split build vs. DB creation with separate flags (e.g., `enable_builder` and `enable_rds_custom`), build the AMI/CEV first (`enable_builder = true`), verify with the CLI above, then enable the DB.
 
 ## Configuration
 
@@ -174,10 +204,11 @@ EC2 instance uses **secondary IPs only** (no multi-ENI):
 - **EBS Encryption**: Enabled by default
 - **VPC Endpoints**: Private communication with AWS services
 - **Security Groups**: Principle of least privilege
+- **Parameter/Option Groups**: Ensure the parameter group family and option group are compatible with the CEV engine version; mismatches cause different failure states (not `incompatible-network`) but will still block availability.
 
 ### RDS Custom Scheduler
 
-Automated start/stop for cost optimization:
+Automated start/stop for cost optimization. Make sure EventBridge/CloudWatch endpoints are present if running fully private.
 
 | Schedule | Cron Expression | Time (UTC) | Time (MST) |
 |----------|----------------|------------|------------|
@@ -248,6 +279,73 @@ dynamodb_table = "terraform-state-lock"
 ```
 
 ## Troubleshooting
+
+### RDS Custom stuck in `incompatible-network`
+
+This is almost always a **network reachability** problem from the DB's subnets to AWS control-plane services.
+
+**Quick checks**
+1. **Run AWS Support runbook** (helps pinpoint IP/DNS/subnet issues):
+   ```bash
+   aws ssm start-automation-execution \
+     --region us-east-2 \
+     --document-name AWSSupport-ValidateRdsNetworkConfiguration \
+     --parameters DBInstanceIdentifier=dev-legacy-webapp-rds-custom
+   ```
+2. **VPC endpoints**
+   - SSM / SSMMessages / EC2Messages / Logs / Events / Monitoring / Secrets Manager (Interface; Private DNS = true)
+   - S3 (Gateway; route tables attached to **private** subnets)
+3. **SG & DNS**
+   - VPCE security group allows TCP 443 from the RDS path (VPC CIDR or the DB SG)
+   - VPC DNS support/hostnames enabled
+
+**Terraform gotchas**
+- Don’t pass raw IDs into `depends_on`. Depend on **resources**. In a child module, convert endpoint IDs to data sources and use a **static list**:
+  ```hcl
+  data "aws_vpc_endpoint" "ssm"            { id = var.vpc.ssm_vpce_id }
+  data "aws_vpc_endpoint" "ssmmessages"    { id = var.vpc.ssmmessages_vpce_id }
+  data "aws_vpc_endpoint" "ec2messages"    { id = var.vpc.ec2messages_vpce_id }
+  data "aws_vpc_endpoint" "logs"           { id = var.vpc.logs_vpce_id }
+  data "aws_vpc_endpoint" "events"         { id = var.vpc.events_vpce_id }
+  data "aws_vpc_endpoint" "monitoring"     { id = var.vpc.monitoring_vpce_id }
+  data "aws_vpc_endpoint" "secretsmanager" { id = var.vpc.secretsmanager_vpce_id }
+  data "aws_vpc_endpoint" "s3_gateway"     { id = var.vpc.s3_gateway_vpce_id }
+
+  resource "aws_db_instance" "rds_custom" {
+    # ...
+    depends_on = [
+      data.aws_vpc_endpoint.ssm,
+      data.aws_vpc_endpoint.ssmmessages,
+      data.aws_vpc_endpoint.ec2messages,
+      data.aws_vpc_endpoint.logs,
+      data.aws_vpc_endpoint.events,
+      data.aws_vpc_endpoint.monitoring,
+      data.aws_vpc_endpoint.secretsmanager,
+      data.aws_vpc_endpoint.s3_gateway
+    ]
+  }
+  ```
+- If you need VPC context in a module, **pass outputs** as an object; don’t pass the module itself:
+  ```hcl
+  variable "vpc" {
+    type = object({
+      id                 = string
+      cidr_block         = string
+      private_subnet_ids = list(string)
+      ssm_vpce_id            = string
+      ssmmessages_vpce_id    = string
+      ec2messages_vpce_id    = string
+      logs_vpce_id           = string
+      events_vpce_id         = string
+      monitoring_vpce_id     = string
+      secretsmanager_vpce_id = string
+      s3_gateway_vpce_id     = string
+    })
+  }
+  ```
+
+**Recover**
+- Fix the network issues above, then recreate the DB (or `start-db-instance` if stopped). If still stuck, restore from snapshot/PITR into the corrected network.
 
 ### EC2 Not Appearing in SSM
 
