@@ -118,3 +118,8 @@ variable "custom_rds_username" {
   default     = "sqladmin"
 }
 
+variable "dev_cev_version" {
+  type        = string
+  description = "From the custom AMI build process"
+}
+

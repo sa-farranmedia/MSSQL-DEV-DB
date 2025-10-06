@@ -103,7 +103,7 @@ bash create-cev.sh
 ### 5) Deploy RDS Custom from the CEV
 In your RDS module variables (or resource):
 ```
-engine         = "custom-sqlserver-web"   # or -se / -ee to match your AMI
+engine         = "custom-sqlserver-dev"   # or -se / -ee to match your AMI
 engine_version = "16.00.4195.2.dev-cev-YYYYMMDD"
 ```
 Then apply your infra as usual.

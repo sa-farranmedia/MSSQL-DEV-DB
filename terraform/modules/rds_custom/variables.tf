@@ -63,6 +63,9 @@ variable "db_master_password_param_name" {
   default     = "/dev/legacy-webapp/rds/master-password"
 }
 
+variable "dev_cev_version" {
+  type        = string
+}
 variable "vpc" {
   description = "VPC context required by RDS Custom"
   type = object({

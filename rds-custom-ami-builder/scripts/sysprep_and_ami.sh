@@ -5,17 +5,31 @@
 # - After AMI creation, revoke any VPCE ingress rules we added so 'terraform destroy' is clean
 set -euo pipefail
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "jq is required for JSON encoding of SSM parameters. Install jq and re-run." >&2
+  exit 1
+fi
+
 # ---------- inputs ----------
-DEFAULT_REGION="$(aws configure get region 2>/dev/null || echo us-east-2)"
+DEFAULT_REGION="$(aws configure get region 2>/dev/null)"
+DEFAULT_REGION="${DEFAULT_REGION:-us-east-2}"
 read -rp "AWS region [${DEFAULT_REGION}]: " REGION
 REGION="${REGION:-$DEFAULT_REGION}"
+if [[ -z "$REGION" ]]; then
+  echo "Region is required (example: us-east-2)"; exit 1;
+fi
 
 read -rp "EC2 Instance ID (e.g., i-0123456789abcdef0): " INSTANCE_ID
 if [[ -z "${INSTANCE_ID}" ]]; then echo "Instance ID is required"; exit 1; fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)"
-read -rp "AMI name [ws2019-sql2022-li-${STAMP}]: " AMI_NAME
-AMI_NAME="${AMI_NAME:-ws2019-sql2022-li-${STAMP}}"
+read -rp "AMI name [ws2019-sql2022-dev-${STAMP}]: " AMI_NAME
+AMI_NAME="${AMI_NAME:-ws2019-sql2022-dev-${STAMP}}"
+
+# SQL Server 2022 Developer ISO location in S3 (used to install Dev before sysprep)
+DEFAULT_SQL_ISO_URI="s3://dev-sqlserver-supportfiles-backups-and-iso-files/media/SQLServer2022-x64-ENU-Dev.iso"
+read -rp "SQL Server 2022 Developer ISO S3 URI [${DEFAULT_SQL_ISO_URI}]: " SQL_ISO_URI
+SQL_ISO_URI="${SQL_ISO_URI:-$DEFAULT_SQL_ISO_URI}"
 
 # Allow override via env vars; otherwise use sane defaults
 ROLE="${ROLE:-SSMManagedInstanceRole}"
@@ -184,6 +198,252 @@ if [[ "${COUNT:-0}" != "1" ]]; then
   exit 1
 fi
 
+ # ---------- S3 gateway endpoint (for private buckets via VPC policy) ----------
+ # Ensure the builder subnet's route table has an S3 Gateway VPCE attached so bucket policies using aws:SourceVpc work.
+ # This is idempotent; it reuses existing endpoint and attaches the correct RTB if needed.
+ # Resolve the route table associated to the instance subnet; if none, fall back to the VPC's main route table.
+ RTB_ID="$(aws ec2 describe-route-tables --region "$REGION" \
+   --filters Name=association.subnet-id,Values="$SUBNET_ID" \
+   --query 'RouteTables[0].RouteTableId' --output text 2>/dev/null || true)"
+ if [[ -z "$RTB_ID" || "$RTB_ID" == "None" || "$RTB_ID" == "null" ]]; then
+   RTB_ID="$(aws ec2 describe-route-tables --region "$REGION" \
+     --filters Name=vpc-id,Values="$VPC_ID" \
+     --query 'RouteTables[?Associations[?Main==`true`]].RouteTableId | [0]' --output text 2>/dev/null || true)"
+ fi
+ if [[ -z "$RTB_ID" || "$RTB_ID" == "None" || "$RTB_ID" == "null" ]]; then
+   RTB_ID="$(aws ec2 describe-route-tables --region "$REGION" \
+     --filters Name=vpc-id,Values="$VPC_ID" \
+     --query 'RouteTables[0].RouteTableId' --output text 2>/dev/null || true)"
+ fi
+ echo "Using VPC=$VPC_ID RTB=$RTB_ID for S3 gateway endpoint wiring"
+ if [[ -n "$RTB_ID" && "$RTB_ID" != "None" && "$RTB_ID" != "null" ]]; then
+   S3_EP_ID="$(aws ec2 describe-vpc-endpoints --region "$REGION" \
+     --filters Name=vpc-id,Values="$VPC_ID" Name=vpc-endpoint-type,Values=Gateway \
+              Name=service-name,Values="com.amazonaws.$REGION.s3" \
+     --query 'VpcEndpoints[0].VpcEndpointId' --output text 2>/dev/null || true)"
+   if [[ -z "$S3_EP_ID" || "$S3_EP_ID" == "None" || "$S3_EP_ID" == "null" ]]; then
+     echo "Creating S3 Gateway VPCE in $VPC_ID and attaching RTB $RTB_ID"
+     S3_EP_ID="$(aws ec2 create-vpc-endpoint --region "$REGION" \
+       --vpc-id "$VPC_ID" \
+       --vpc-endpoint-type Gateway \
+       --service-name "com.amazonaws.$REGION.s3" \
+       --route-table-ids "$RTB_ID" \
+       --query 'VpcEndpoint.VpcEndpointId' --output text 2>/dev/null || true)"
+   else
+     echo "Reusing S3 Gateway VPCE $S3_EP_ID; ensuring RTB $RTB_ID is attached"
+     aws ec2 modify-vpc-endpoint --region "$REGION" \
+       --vpc-endpoint-id "$S3_EP_ID" --add-route-table-ids "$RTB_ID" >/dev/null 2>&1 || true
+   fi
+   # Optional verification (non-fatal)
+   aws ec2 describe-route-tables --region "$REGION" --route-table-ids "$RTB_ID" \
+     --query 'RouteTables[0].Routes[?DestinationPrefixListId!=null]' --output text >/dev/null 2>&1 || true
+ else
+   echo "WARNING: Could not resolve a route table for subnet $SUBNET_ID; skipping S3 VPCE wiring."
+ fi
+
+# ---------- install SQL Server 2022 Developer (BYOM) ----------
+echo "Installing SQL Server 2022 Developer from ${SQL_ISO_URI} ..."
+
+# Parse bucket/key from the provided S3 URI
+URI_NO_PREFIX="${SQL_ISO_URI#s3://}"
+SQL_BUCKET="${URI_NO_PREFIX%%/*}"
+SQL_KEY="${URI_NO_PREFIX#*/}"
+
+POLICY_DOC="$(jq -n --arg b "$SQL_BUCKET" --arg k "$SQL_KEY" '{
+    Version:"2012-10-17",
+    Statement:[
+      {Effect:"Allow", Action:["s3:ListBucket"], Resource:["arn:aws:s3:::\($b)"]},
+      {Effect:"Allow", Action:["s3:GetObject","s3:GetObjectVersion"], Resource:["arn:aws:s3:::\($b)/\($k)"]},
+      {Effect:"Allow", Action:["s3:PutObject"], Resource:["arn:aws:s3:::\($b)/logs/*"]}
+    ]
+  }')"
+aws iam put-role-policy \
+  --role-name "$ROLE" \
+  --policy-name "AllowReadSQLISO" \
+  --policy-document "$POLICY_DOC" >/dev/null
+
+# Quick existence check for the object
+if ! aws s3api head-object --bucket "$SQL_BUCKET" --key "$SQL_KEY" --region "$REGION" >/dev/null 2>&1; then
+  echo "S3 object not found: s3://${SQL_BUCKET}/${SQL_KEY}" >&2
+  exit 1
+fi
+
+# Also generate a short-lived presigned URL as a fallback path
+SQL_ISO_PRESIGNED="$(aws s3 presign "s3://${SQL_BUCKET}/${SQL_KEY}" --region "${REGION}" --expires-in 21600)"
+
+# BEGIN PATCHED BLOCK
+PS_COMMAND=$(
+  cat <<'POW'
+$ErrorActionPreference="Stop"; $ProgressPreference="SilentlyContinue"; $PSNativeCommandUseErrorActionPreference=$true;
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+New-Item -ItemType Directory -Path C:\Temp -Force | Out-Null;
+$iso = Join-Path $env:TEMP ("SQLDev_{0}.iso" -f ([guid]::NewGuid().ToString()));
+$legacyIso = "C:\Temp\SQLDev.iso";
+
+# Inputs injected by bash after this heredoc via placeholder substitution
+$uS3    = "__S3_URI__";
+$region = "__REGION__";
+
+# Clean up any previous mount/file
+Get-DiskImage -ImagePath $legacyIso -ErrorAction SilentlyContinue | Where-Object { $_.Attached } | Dismount-DiskImage -ErrorAction SilentlyContinue;
+if (Test-Path $legacyIso) { Remove-Item $legacyIso -Force -ErrorAction SilentlyContinue }
+
+# Ensure AWS CLI exists on the instance
+if (-not (Get-Command aws.exe -ErrorAction SilentlyContinue)) {
+  $msi = Join-Path $env:TEMP "awscli.msi";
+  Invoke-WebRequest -Uri "https://awscli.amazonaws.com/AWSCLIV2.msi" -OutFile $msi;
+  $p = Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn" -Wait -PassThru;
+  if ($p.ExitCode -ne 0) { throw "AWS CLI install failed: $([int]$p.ExitCode)" }
+}
+
+# --- Prereqs: Ensure .NET Framework 4.7.2+ and VC++ 2015-2022 (x64) ---
+function Get-DotNetRelease { try { (Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full').Release } catch { 0 } }
+$min472 = 461808  # .NET 4.7.2 minimum release key
+$have = Get-DotNetRelease
+if ($have -lt $min472) {
+  Write-Host "[BYOM] Installing .NET Framework 4.8 ..."
+  $dotUrl = "https://go.microsoft.com/fwlink/?linkid=2088631"  # ndp48-x86-x64-allos-enu.exe
+  $dotExe = Join-Path $env:TEMP "ndp48-x86-x64-allos-enu.exe"
+  try { Start-BitsTransfer -Source $dotUrl -Destination $dotExe -Priority Foreground -ErrorAction Stop }
+  catch { Invoke-WebRequest -Uri $dotUrl -OutFile $dotExe -UseBasicParsing -TimeoutSec 1800 }
+  $dp = Start-Process -FilePath $dotExe -ArgumentList "/q /norestart" -Wait -PassThru
+  if ($dp.ExitCode -ne 0 -and $dp.ExitCode -ne 3010) { throw "DotNet48 install failed with exit code $($dp.ExitCode)" }
+}
+
+Write-Host "[BYOM] Ensuring VC++ 2015-2022 (x64) redistributable ..."
+$vcUrl = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+$vcExe = Join-Path $env:TEMP "vc_redist.x64.exe"
+try { Start-BitsTransfer -Source $vcUrl -Destination $vcExe -Priority Foreground -ErrorAction Stop }
+catch { Invoke-WebRequest -Uri $vcUrl -OutFile $vcExe -UseBasicParsing -TimeoutSec 1800 }
+$vp = Start-Process -FilePath $vcExe -ArgumentList "/quiet /norestart" -Wait -PassThru
+if ($vp.ExitCode -ne 0 -and $vp.ExitCode -ne 3010) { throw "VC++ Redist install failed with exit code $($vp.ExitCode)" }
+# --- End prereqs ---
+
+# Try IAM-authenticated copy first (PS 5.1 compatible)
+$copied = $false
+$awsCmd = Get-Command aws.exe -ErrorAction SilentlyContinue
+$aws = $null
+if ($awsCmd) { $aws = $awsCmd.Source }
+if (-not $aws) { $aws = Join-Path $env:ProgramFiles "Amazon\AWSCLIV2\aws.exe" }
+try {
+  & "$aws" s3 cp $uS3 $iso --region $region --no-progress
+  if (Test-Path $iso) {
+    $copied = $true
+    Write-Host "[BYOM] Downloaded ISO via aws s3 cp (IAM auth)."
+  }
+} catch {
+  Write-Warning ("[BYOM] aws s3 cp threw: {0}" -f $_.Exception.Message)
+}
+
+# Fallback to presigned URL only if IAM path failed
+if (-not $copied) {
+  Write-Warning "[BYOM] Falling back to presigned URL. First try BITS, then Invoke-WebRequest."
+  $u = "__PRESIGNED__"
+  $max = 5
+  for ($i=1; $i -le $max; $i++) {
+    try {
+      Start-BitsTransfer -Source $u -Destination $iso -Description "SQLDevISO" -Priority Foreground -ErrorAction Stop
+      if (Test-Path $iso) { $copied = $true; break }
+    } catch {
+      if ($i -lt $max) { Start-Sleep -Seconds ([math]::Pow(2,$i)) }
+      else { Write-Warning ("[BYOM] BITS failed on final attempt: {0}" -f $_.Exception.Message) }
+    }
+  }
+  if (-not $copied) {
+    try {
+      Invoke-WebRequest -Uri $u -OutFile $iso -UseBasicParsing -TimeoutSec 7200
+      if (Test-Path $iso) { $copied = $true; Write-Host "[BYOM] Downloaded ISO via Invoke-WebRequest." }
+      else { throw "Invoke-WebRequest completed but file not found at $iso" }
+    } catch { throw ("Presigned URL download failed. Last error: {0}" -f $_.Exception.Message) }
+  }
+}
+
+# Mount, install, unmount
+$img = Mount-DiskImage -ImagePath $iso -PassThru;
+Start-Sleep -Seconds 5;
+$dl = (Get-Volume -DiskImage $img).DriveLetter;
+$setup = "$($dl):\setup.exe";
+$args = "/Q /ACTION=Install /FEATURES=SQLENGINE /INSTANCENAME=MSSQLSERVER /IACCEPTSQLSERVERLICENSETERMS /SQLSYSADMINACCOUNTS=`"NT AUTHORITY\\SYSTEM`" /SQLSVCSTARTUPTYPE=Automatic /UPDATEENABLED=0 /INDICATEPROGRESS"
+$p = Start-Process -FilePath $setup -ArgumentList $args -Wait -PassThru;
+
+# Prepare to capture logs if setup fails
+$logRootCandidates = @(
+  "C:\\Program Files\\Microsoft SQL Server\\160\\Setup Bootstrap\\Log",
+  "C:\\Program Files\\Microsoft SQL Server\\150\\Setup Bootstrap\\Log"
+)
+$logRoot = $null
+foreach ($c in $logRootCandidates) { if (Test-Path $c) { $logRoot = $c; break } }
+
+if ($p.ExitCode -ne 0) {
+  try {
+    $latest = if ($logRoot) { Get-ChildItem -Path $logRoot -Directory | Sort-Object LastWriteTime -Descending | Select-Object -First 1 } else { $null }
+    $zip = Join-Path $env:TEMP ("SQLSetupLogs_{0}.zip" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+    if ($latest -and (Test-Path $latest.FullName)) {
+      Compress-Archive -Path $latest.FullName -DestinationPath $zip -Force -ErrorAction SilentlyContinue | Out-Null
+    }
+
+    # Derive bucket from the S3 URI and upload logs under logs/sqlsetup/
+    $bucket = $null
+    if ($uS3 -match '^s3://([^/]+)/') { $bucket = $matches[1] }
+    if ($bucket -and (Test-Path $zip)) {
+      $destKey = "logs/sqlsetup/$($env:COMPUTERNAME)_$((Get-Date).ToString('yyyyMMdd_HHmmss')).zip"
+      & "$aws" s3 cp $zip ("s3://{0}/{1}" -f $bucket, $destKey) --region $region --no-progress | Out-Null
+      Write-Warning ("[BYOM] SQL setup failed. Logs uploaded to s3://{0}/{1}" -f $bucket, $destKey)
+    } else {
+      Write-Warning "[BYOM] SQL setup failed and logs zip could not be uploaded (missing bucket or zip)."
+    }
+  } catch {
+    Write-Warning ("[BYOM] Failed to package/upload SQL setup logs: {0}" -f $_.Exception.Message)
+  }
+  throw "SQL Setup failed with exit code $([int]$p.ExitCode)"
+}
+
+Dismount-DiskImage -ImagePath $iso -ErrorAction SilentlyContinue;
+Remove-Item $iso -Force -ErrorAction SilentlyContinue
+POW
+)
+# Inject the bash variables into the PowerShell script safely
+PS_COMMAND="${PS_COMMAND//__S3_URI__/s3://${SQL_BUCKET}/${SQL_KEY}}"
+PS_COMMAND="${PS_COMMAND//__REGION__/$REGION}"
+PS_COMMAND="${PS_COMMAND//__PRESIGNED__/$SQL_ISO_PRESIGNED}"
+# END PATCHED BLOCK
+
+# Build JSON parameters safely to avoid shell/quote parsing issues
+PARAMS_JSON="$(jq -n --arg c "$PS_COMMAND" '{commands: [$c]}')"
+
+CMD_ID="$(aws ssm send-command \
+  --region "${REGION}" \
+  --instance-ids "${INSTANCE_ID}" \
+  --document-name "AWS-RunPowerShellScript" \
+  --comment "Install SQL Server 2022 Developer (BYOM)" \
+  --cli-binary-format raw-in-base64-out \
+  --parameters "$PARAMS_JSON" \
+  --query 'Command.CommandId' --output text)"
+
+echo "Waiting for SQL Server install to finish..."
+for _ in {1..120}; do
+  STATUS="$(aws ssm list-command-invocations --region "${REGION}" --command-id "$CMD_ID" --details \
+    --query 'CommandInvocations[0].Status' --output text 2>/dev/null || echo "Pending")"
+  if [[ "$STATUS" == "Success" ]]; then echo "✓ SQL Server Developer installed."; break; fi
+  if [[ "$STATUS" == "Failed" || "$STATUS" == "Cancelled" || "$STATUS" == "TimedOut" ]]; then
+    echo "SQL install status: $STATUS"
+    echo "Fetching invocation output..."
+    INV_JSON="$(aws ssm get-command-invocation \
+      --region "${REGION}" \
+      --command-id "$CMD_ID" \
+      --instance-id "${INSTANCE_ID}" \
+      --output json 2>/dev/null || true)"
+    if [[ -n "$INV_JSON" && "$INV_JSON" != "null" ]]; then
+      echo "----- SSM STDOUT (tail) -----"
+      echo "$INV_JSON" | jq -r '.StandardOutputContent' | tail -n 200
+      echo "----- SSM STDERR (tail) -----"
+      echo "$INV_JSON" | jq -r '.StandardErrorContent' | tail -n 200
+    fi
+    exit 1
+  fi
+  sleep 15
+done
+
 # ---------- sysprep via Automation runbook or Run Command ----------
 echo "Checking for AWSEC2-RunSysprep runbook in ${REGION}..."
 HAS_RB="$(aws ssm list-documents --region "${REGION}" \
@@ -195,7 +455,7 @@ if [[ "${HAS_RB}" == "AWSEC2-RunSysprep" ]]; then
   aws ssm start-automation-execution \
     --region "${REGION}" \
     --document-name "AWSEC2-RunSysprep" \
-    --parameters "{\"InstanceId\":[\"${INSTANCE_ID}\"],\"SysprepTimeout\":[\"7200000\"]}" >/dev/null
+    --parameters "{\"InstanceId\":[\"${INSTANCE_ID}\"],\"SysprepTimeout\":[\"16000000\"]}" >/dev/null
 else
   echo "Runbook not found. Falling back to Run Command (AWS-RunPowerShellScript)."
   aws ssm send-command \
@@ -215,7 +475,7 @@ AMI_ID="$(aws ec2 create-image \
   --region "${REGION}" \
   --instance-id "${INSTANCE_ID}" \
   --name "${AMI_NAME}" \
-  --description "WS2019 + SQL 2022 (LI) sysprepped" \
+  --description "WS2019 + SQL 2022 (Developer) sysprepped" \
   --output text --query ImageId)"
 echo "AMI: ${AMI_ID}"
 

@@ -127,7 +127,7 @@ terraform apply -var-file=envs/dev/dev.tfvars
      --query 'DBEngineVersions[].{Engine:Engine,Version:EngineVersion,Status:Status}' \
      --region us-east-2
    ```
-   > If you used `custom-sqlserver-web` instead of `custom-sqlserver-we`, keep that exact string consistent between the CEV and your Terraform `aws_db_instance.engine`.
+   > If you used `custom-sqlserver-dev` instead of `custom-sqlserver-we`, keep that exact string consistent between the CEV and your Terraform `aws_db_instance.engine`.
 
 2. Flip the flag in `envs/dev/dev.tfvars`:
    ```hcl

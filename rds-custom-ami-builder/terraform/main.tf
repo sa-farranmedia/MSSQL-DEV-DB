@@ -20,7 +20,7 @@ data "aws_ami" "windows_2019" {
 
   filter {
     name   = "name"
-    values = ["Windows_Server-2019-English-Full-SQL_2022_Web-*"]
+    values = [var.filter]
   }
 
   filter {
@@ -142,7 +142,7 @@ resource "aws_security_group" "vpce_ssm" {
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = [data.vpc_cidr]  # ← Change to CIDR instead of security group
+    cidr_blocks = [data.aws_vpc.default.cidr_block]  # allow HTTPS from the VPC CIDR
   }
   egress {
     from_port   = 0

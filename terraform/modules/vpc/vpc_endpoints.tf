@@ -4,7 +4,10 @@ locals {
   vpc_id             = aws_vpc.main.id
   region             = data.aws_region.current.name
 }
-
+# locals in modules/vpc/*.tf
+locals {
+  private_route_table_ids = [aws_route_table.private.id]
+}
 
 # Secrets Manager
 resource "aws_vpc_endpoint" "secretsmanager" {
@@ -104,7 +107,7 @@ resource "aws_vpc_endpoint" "s3" {
   vpc_id            = local.vpc_id
   service_name      = "com.amazonaws.${local.region}.s3"
   vpc_endpoint_type = "Gateway"
-  route_table_ids   = aws_route_table.private[*].id
+  route_table_ids   = local.private_route_table_ids
 
   tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-vpce-s3"

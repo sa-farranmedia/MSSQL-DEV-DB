@@ -102,8 +102,8 @@ resource "aws_iam_instance_profile" "rds_custom" {
 
 resource "aws_db_instance" "rds_custom" {
   identifier     = "${var.env}-${var.project_name}-rds-custom"
-  engine         = "custom-sqlserver-web"
-  engine_version = "16.00.4195.2.dev-cev-20251005"  # matches your created CEV
+  engine         = "custom-sqlserver-dev"
+  engine_version = var.dev_cev_version # matches your created CEV
   auto_minor_version_upgrade  = false
 
   instance_class    = var.instance_class

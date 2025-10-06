@@ -35,14 +35,14 @@ fi
 ENGINE=""
 EDITION=""
 case "$AMI_NAME" in
-  *SQL_2022_Web*|*SQL_2019_Web*)          ENGINE="custom-sqlserver-web"; EDITION="Web" ;;
+  *SQL_2022_Web*|*SQL_2019_Web*)          ENGINE="custom-sqlserver-dev"; EDITION="Web" ;;
   *SQL_2022_Standard*|*SQL_2019_Standard*)ENGINE="custom-sqlserver-se"; EDITION="Standard" ;;
   *SQL_2022_Enterprise*|*SQL_2019_Enterprise*) ENGINE="custom-sqlserver-ee"; EDITION="Enterprise" ;;
   *)
     echo "Could not infer SQL edition from AMI name: $AMI_NAME"
-    read -rp "Enter engine (custom-sqlserver-web | custom-sqlserver-se | custom-sqlserver-ee): " ENGINE
+    read -rp "Enter engine (custom-sqlserver-dev | custom-sqlserver-se | custom-sqlserver-ee): " ENGINE
     case "$ENGINE" in
-      custom-sqlserver-web) EDITION="Web" ;;
+      custom-sqlserver-dev) EDITION="Web" ;;
       custom-sqlserver-se) EDITION="Standard" ;;
       custom-sqlserver-ee) EDITION="Enterprise" ;;
       *) echo "ERROR: Invalid engine selection"; exit 1 ;;

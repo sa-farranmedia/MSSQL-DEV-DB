@@ -43,6 +43,7 @@ module "windows_ec2" {
 module "rds_custom" {
   source = "./modules/rds_custom"
 
+  dev_cev_version    = var.dev_cev_version
   project_name       = var.project_name
   env                = var.env
   region             = var.region

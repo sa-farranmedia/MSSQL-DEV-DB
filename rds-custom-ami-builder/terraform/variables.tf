@@ -16,11 +16,16 @@ variable "region" {
   default     = "us-east-2"
 }
 
-variable "li_ami_ssm_param" {
-  description = "SSM parameter for LI AMI (WS2019 + SQL edition)"
+variable "base_ami_ssm_param" {
+  description = "SSM public parameter for Windows Server 2019 Base AMI"
   type        = string
-  default     = "/aws/service/ami-windows-latest/Windows_Server-2019-English-Full-SQL_2022_Web"
 }
+
+variable "filter" {
+  description = "Windows Server 2019 Base AMI"
+  type        = string
+}
+
 variable "builder_public" {
   description = "If true, assign a public IP for the builder (uses Internet path for SSM). If false, create SSM VPCEs and keep private."
   type        = bool
