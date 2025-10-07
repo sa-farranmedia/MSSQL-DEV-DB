@@ -79,3 +79,7 @@ variable "vpc" {
     s3_gateway_vpce_id     = string
   })
 }
+variable "vpce_security_group_id" {
+  description = "VPC Endpoints Security Group ID"
+  type        = string
+}

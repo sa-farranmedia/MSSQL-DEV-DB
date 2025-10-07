@@ -103,7 +103,7 @@ resource "aws_vpc_endpoint" "monitoring" {
   })
 }
 
-resource "aws_vpc_endpoint" "s3" {
+resource "aws_vpc_endpoint" "s3_gateway" {
   vpc_id            = local.vpc_id
   service_name      = "com.amazonaws.${local.region}.s3"
   vpc_endpoint_type = "Gateway"
@@ -112,14 +112,4 @@ resource "aws_vpc_endpoint" "s3" {
   tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-vpce-s3"
   })
-}
-
-
-data "aws_route_tables" "private_rts" {
-  vpc_id = local.vpc_id
-
-  filter {
-    name   = "association.subnet-id"
-    values = local.private_subnet_ids
-  }
 }

@@ -28,7 +28,6 @@ data "aws_vpc_endpoint" "s3_gateway" {
   id = var.vpc.s3_gateway_vpce_id
 }
 
-# Security Group for RDS Custom
 resource "aws_security_group" "rds_custom" {
   name        = "${var.env}-${var.project_name}-rds-sg"
   description = "Security group for RDS Custom SQL Server"
@@ -43,11 +42,19 @@ resource "aws_security_group" "rds_custom" {
   }
 
   egress {
-    description = "Allow all outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
+    description = "HTTPS to AWS services"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
+  }
+
+    egress {
+    description = "IMDSv2 token fetch"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["169.254.169.254/32"]
   }
 
   tags = merge(var.tags, {
@@ -90,15 +97,12 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
 
 resource "aws_iam_instance_profile" "rds_custom" {
   # MUST begin with AWSRDSCustom*
-  name = "AWSRDSCustomSQLServerInstanceProfile-${var.env}"
+  name = "AWSRDSCustomSQLServerInstanceProfile"
   role = aws_iam_role.rds_custom.name
     tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-rds-custom-profile"
   })
 }
-# RDS Custom DB Instance
-# NOTE: Comment this out until CEV is created and registered
-# Uncomment after running rds-custom-ami-builder workflow
 
 resource "aws_db_instance" "rds_custom" {
   identifier     = "${var.env}-${var.project_name}-rds-custom"
@@ -122,7 +126,7 @@ resource "aws_db_instance" "rds_custom" {
   # Custom Engine Version requires custom IAM role
   custom_iam_instance_profile = aws_iam_instance_profile.rds_custom.name
 
-  backup_retention_period = 7
+  backup_retention_period = 3
   backup_window           = "03:00-04:00"
   maintenance_window      = "sun:04:00-sun:05:00"
 
@@ -361,4 +365,40 @@ resource "aws_lambda_permission" "allow_eventbridge_stop_weekend" {
   function_name = aws_lambda_function.stop_rds[0].function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.stop_weekend[0].arn
+}
+# Add to your IAM role if missing
+resource "aws_iam_role_policy" "rds_custom_additional" {
+  role = aws_iam_role.rds_custom.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter",
+          "ssm:GetParameters",
+          "ssm:UpdateInstanceInformation",
+          "ssmmessages:CreateControlChannel",
+          "ssmmessages:CreateDataChannel",
+          "ssmmessages:OpenControlChannel",
+          "ssmmessages:OpenDataChannel",
+          "ec2messages:GetMessages"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+resource "aws_security_group_rule" "vpce_from_rds" {
+  type                     = "ingress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  security_group_id        = var.vpce_security_group_id
+  source_security_group_id = aws_security_group.rds_custom.id
+  description              = "HTTPS from RDS Custom"
+}
+resource "aws_iam_role_policy_attachment" "rds_custom_profile_policy" {
+  role       = aws_iam_role.rds_custom.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonRDSCustomInstanceProfileRolePolicy"
 }

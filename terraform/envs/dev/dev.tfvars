@@ -22,7 +22,7 @@ static_ips = [
 # IMPORTANT: Set enable_rds_custom to true AFTER CEV is registered
 enable_rds_custom = true
 enable_scheduler  = true
-dev_cev_version = ""
+dev_cev_version = "16.00.4195.2.dev-cev-20251006"
 # SSM Access Control
 ssm_allowed_iam_usernames = ["dev-brandon-leal","dev-nick-avaneas","dev-brandon-jerrell"]
 

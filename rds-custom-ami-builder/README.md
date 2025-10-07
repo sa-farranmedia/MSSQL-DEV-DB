@@ -13,7 +13,7 @@ This repo builds a **Custom Engine Version (CEV)** for **RDS Custom for SQL Serv
 1. **Pick LI AMI** for the edition you want (Web/Standard/Enterprise) on **WS2019** using SSM Parameter Store.
 2. `terraform apply -var-file=terraform/ami-builder.tfvars` to launch the **builder**.
 3. Run `bash scripts/sysprep_and_ami.sh` → preflights SSM → Sysprep → AMI → prints **AMI ID**.
-4. Run `bash scripts/create-cev.sh` to create the **CEV** from that AMI (engine must match edition; e.g. `custom-sqlserver-we`).
+4. Run `bash scripts/create-cev.sh` to create the **CEV** from that AMI (engine must match edition; e.g. `custom-sqlserver-web` | `custom-sqlserver-se` | `custom-sqlserver-ee`).
 5. Point Terraform for your DB to that **CEV** and apply.
 6. Destroy the builder when done.
 
@@ -26,6 +26,54 @@ This repo builds a **Custom Engine Version (CEV)** for **RDS Custom for SQL Serv
   - Interface VPC Endpoints or NAT for: `ssm`, `ssmmessages`, `ec2messages`.
   - For the DB creation/validation also ensure: `logs`, `monitoring`, `events`, `secretsmanager`, and **S3 Gateway** on the route tables.
 - **IAM**: the builder instance profile needs `AmazonSSMManagedInstanceCore`.
+
+### S3 access (required for BYOM ISO and DB validation)
+
+You have two supported paths:
+
+**A) Public/NAT path**
+- Give the builder a public IP or NAT egress. No S3 Gateway VPCE required.
+
+**B) Private VPC path**
+- Create an **S3 Gateway VPC Endpoint** and attach it to the **route tables** used by your builder/DB subnets.
+- Ensure your **bucket policy** allows reads from your account (or specific roles). Example (entire account allowed):
+  ```json
+  {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "AccountList",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::050752651470:root" },
+        "Action": ["s3:ListBucket"],
+        "Resource": "arn:aws:s3:::dev-sqlserver-supportfiles-backups-and-iso-files"
+      },
+      {
+        "Sid": "AccountRead",
+        "Effect": "Allow",
+        "Principal": { "AWS": "arn:aws:iam::050752651470:root" },
+        "Action": ["s3:GetObject"],
+        "Resource": "arn:aws:s3:::dev-sqlserver-supportfiles-backups-and-iso-files/*"
+      }
+    ]
+  }
+  ```
+- Attach minimal **IAM** to the builder instance profile (if using `aws s3 cp` inside SSM):
+  ```json
+  {
+    "Version":"2012-10-17",
+    "Statement":[
+      {"Effect":"Allow","Action":["s3:ListBucket"],"Resource":"arn:aws:s3:::dev-sqlserver-supportfiles-backups-and-iso-files"},
+      {"Effect":"Allow","Action":["s3:GetObject"],"Resource":"arn:aws:s3:::dev-sqlserver-supportfiles-backups-and-iso-files/*"}
+    ]
+  }
+  ```
+- Verify your route table has the S3 prefix list route via the VPCE (shows `DestinationPrefixListId`):
+  ```bash
+  aws ec2 describe-route-tables \
+    --route-table-ids rtb-XXXXXXXX \
+    --query 'RouteTables[0].Routes[?DestinationPrefixListId!=null]'
+  ```
 
 ---
 
@@ -94,16 +142,24 @@ bash create-cev.sh
 ```
 - Use a supported SQL 2022 build; we default to **CU19** in examples: `16.00.4195.2.dev-cev-YYYYMMDD`.
 - **Engine must match edition** of the AMI:
-  - Web → `custom-sqlserver-we`
+  - Web → `custom-sqlserver-web`
   - Standard → `custom-sqlserver-se`
   - Enterprise → `custom-sqlserver-ee`
+
+**Edition → engine quick map**
+
+| Edition    | Engine                 |
+|------------|------------------------|
+| Web        | custom-sqlserver-web   |
+| Standard   | custom-sqlserver-se    |
+| Enterprise | custom-sqlserver-ee    |
 
 > The CEV will show **`pending-validation`** until you successfully create an RDS Custom DB instance from it.
 
 ### 5) Deploy RDS Custom from the CEV
 In your RDS module variables (or resource):
 ```
-engine         = "custom-sqlserver-dev"   # or -se / -ee to match your AMI
+engine         = "custom-sqlserver-web"   # or custom-sqlserver-se / custom-sqlserver-ee
 engine_version = "16.00.4195.2.dev-cev-YYYYMMDD"
 ```
 Then apply your infra as usual.
@@ -117,21 +173,30 @@ Keep the AMI and CEV.
 
 ---
 
-## File structure
-```
-rds-custom-ami-builder/
-├── README.md
-├── terraform/
-│   ├── main.tf                  # Builder EC2 from LI AMI (WS2019 + SQL 2022)
-│   ├── variables.tf             # Includes builder_public & create_ssm_endpoints
-│   └── ami-builder.tfvars       # Region/env/project; public/private toggles
-└── scripts/
-    ├── sysprep_and_ami.sh       # Preflight SSM → Sysprep → AMI
-    ├── create-cev.sh            # Create CEV from AMI (engine must match edition)
-    └── deploy-rds-custom.sh     # Apply DB from CEV
-```
+## Optional: BYOM Developer ISO mode
+
+If you prefer to start from a plain WS2019 AMI and install **SQL Server 2022 Developer** yourself (e.g., from an S3-hosted ISO), the `scripts/sysprep_and_ami.sh` supports that path. Provide the S3 URI when prompted.
+
+The script:
+- Ensures SSM is ready, then downloads the ISO (`aws s3 cp` under IAM; falls back to presigned URL if needed).
+- Installs prerequisites **.NET Framework 4.8** and **VC++ 2015–2022 (x64)** silently if missing.
+- Mounts ISO and runs silent setup for `SQLENGINE`.
+- Syspreps and creates the AMI.
+
+**Requirements**
+- WS2019 base AMI.
+- S3 access (see the *S3 access* section).
+- Instance profile with `AmazonSSMManagedInstanceCore` plus S3 read if using IAM auth for `aws s3 cp`.
+
+---
 
 ## Troubleshooting
+
+- **403 / AccessDenied downloading ISO from S3**
+  - If the script prints `[BYOM] Falling back to presigned URL + BITS` and still fails: fix the bucket policy and/or attach S3 read to the instance profile (see *S3 access*). For private subnets, ensure an S3 Gateway VPCE is attached to the route table.
+
+- **SQL setup exit code -2068709375 (0x84B40000)**
+  - Missing prerequisites. The script now installs **.NET 4.8** and **VC++ 2015–2022 x64** automatically. If you customized it, ensure those packages install successfully before running `setup.exe`.
 
 - **SSM not registering / send-command fails**
   - Ensure the builder has an instance profile with `AmazonSSMManagedInstanceCore`.
@@ -143,7 +208,7 @@ rds-custom-ami-builder/
   - Ensure DB subnets can reach: `logs`, `monitoring`, `events`, `secretsmanager` and S3 (Gateway) in addition to the three SSM services.
 
 - **Invalid DB engine**
-  - Engine must match the AMI’s SQL edition: Web → `-we`, Standard → `-se`, Enterprise → `-ee`.
+  - Engine must match the AMI’s SQL edition: Web → `custom-sqlserver-web`, Standard → `custom-sqlserver-se`, Enterprise → `custom-sqlserver-ee`.
 
 - **`incompatible-network` during DB create**
   - Missing VPCEs/NAT, SG/NACL blocks, or no free IPs in DB subnets. Fix endpoints and 443 egress.
@@ -163,6 +228,19 @@ aws rds describe-db-engine-versions \
   --engine custom-sqlserver-we \
   --engine-version "16.00.4195.2.dev-cev-YYYYMMDD" \
   --region us-east-2
+```
+
+# Verify required Interface VPCEs exist and have Private DNS enabled (example us-east-2)
+for svc in ssm ssmmessages ec2messages logs monitoring events secretsmanager; do
+  aws ec2 describe-vpc-endpoints \
+    --filters Name=vpc-id,Values=vpc-XXXXXXXX Name=service-name,Values=com.amazonaws.us-east-2.$svc \
+    --query 'VpcEndpoints[].{Id:VpcEndpointId,PrivateDNS:PrivateDnsEnabled}'
+done
+
+# Verify S3 Gateway VPCE is associated to your route table
+aws ec2 describe-vpc-endpoints \
+  --filters Name=vpc-id,Values=vpc-XXXXXXXX Name=vpc-endpoint-type,Values=Gateway Name=service-name,Values=com.amazonaws.us-east-2.s3 \
+  --query 'VpcEndpoints[0].RouteTableIds'
 ```
 
 ---

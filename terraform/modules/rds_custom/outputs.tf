@@ -19,10 +19,6 @@ output "rds_sg_id" {
   value       = aws_security_group.rds_custom.id
 }
 
-output "security_group_id" {
-  description = "RDS security group ID"
-  value       = aws_security_group.rds_custom.id
-}
 
 output "subnet_group_name" {
   description = "DB subnet group name"

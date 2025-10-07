@@ -363,7 +363,7 @@ $img = Mount-DiskImage -ImagePath $iso -PassThru;
 Start-Sleep -Seconds 5;
 $dl = (Get-Volume -DiskImage $img).DriveLetter;
 $setup = "$($dl):\setup.exe";
-$args = "/Q /ACTION=Install /FEATURES=SQLENGINE /INSTANCENAME=MSSQLSERVER /IACCEPTSQLSERVERLICENSETERMS /SQLSYSADMINACCOUNTS=`"NT AUTHORITY\\SYSTEM`" /SQLSVCSTARTUPTYPE=Automatic /UPDATEENABLED=0 /INDICATEPROGRESS"
+$args = "/Q /ACTION=Install /FEATURES=SQLENGINE /INSTANCENAME=MSSQLSERVER /IACCEPTSQLSERVERLICENSETERMS /SQLSYSADMINACCOUNTS=`"NT AUTHORITY\\SYSTEM`" /SQLSVCSTARTUPTYPE=Manual /AGTSVCSTARTUPTYPE=Manual /BROWSERSVCSTARTUPTYPE=Disabled /UPDATEENABLED=0 /INDICATEPROGRESS"
 $p = Start-Process -FilePath $setup -ArgumentList $args -Wait -PassThru;
 
 # Prepare to capture logs if setup fails
@@ -400,6 +400,16 @@ if ($p.ExitCode -ne 0) {
 
 Dismount-DiskImage -ImagePath $iso -ErrorAction SilentlyContinue;
 Remove-Item $iso -Force -ErrorAction SilentlyContinue
+
+Write-Host "[BYOM] Stopping SQL services before sysprep..."
+Stop-Service SQLSERVERAGENT -Force -ErrorAction SilentlyContinue
+Stop-Service MSSQLSERVER -Force
+Stop-Service SQLBrowser -ErrorAction SilentlyContinue
+
+Set-Service MSSQLSERVER -StartupType Manual
+Set-Service SQLSERVERAGENT -StartupType Manual
+Set-Service SQLBrowser -StartupType Disabled -ErrorAction SilentlyContinue
+
 POW
 )
 # Inject the bash variables into the PowerShell script safely

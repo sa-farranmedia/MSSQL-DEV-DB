@@ -10,6 +10,7 @@ module "vpc" {
   private_subnet_cidrs = var.private_subnet_cidrs
   public_subnet_cidrs  = var.public_subnet_cidrs
   availability_zones   = local.azs
+  # rds_sg_id = module.rds_custom.rds_sg_id
   tags = local.common_tags
 }
 
@@ -47,7 +48,7 @@ module "rds_custom" {
   project_name       = var.project_name
   env                = var.env
   region             = var.region
-
+  vpce_security_group_id = module.vpc.vpce_security_group_id
   vpc_id             = module.vpc.vpc_id
   private_subnet_ids = module.vpc.private_subnet_ids
   vpc_cidr          = var.vpc_cidr

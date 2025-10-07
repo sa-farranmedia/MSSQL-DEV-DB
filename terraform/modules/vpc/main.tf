@@ -137,30 +137,6 @@ resource "aws_security_group" "vpc_endpoints" {
   })
 }
 
-resource "aws_security_group" "vpce_ssm" {
-  name        = "${var.env}-${var.project_name}-vpce-ssm-sg"
-  description = "Allow 443 from RDS Custom DB to SSM VPCEs"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description     = "DB SG to VPCEs on 443"
-    from_port       = 443
-    to_port         = 443
-    protocol        = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-  }
-
-  egress {
-    description = "All egress"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = merge(var.tags, { Name = "${var.env}-${var.project_name}-vpce-ssm" })
-}
-
 data "aws_region" "current" {}
 
 
