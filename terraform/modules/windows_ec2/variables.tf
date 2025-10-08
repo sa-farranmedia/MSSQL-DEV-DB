@@ -55,4 +55,9 @@ variable "tags" {
   default     = {}
 }
 
+variable "rds_security_group_id" {
+  description = "For RDS basion connection"
+  type        = string
+}
+
 

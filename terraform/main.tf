@@ -23,7 +23,7 @@ module "windows_ec2" {
   project_name = var.project_name
   env          = var.env
   region       = var.region
-
+  rds_security_group_id = module.rds_custom.rds_sg_id
   vpc_id            = module.vpc.vpc_id
   subnet_id         = module.vpc.private_subnet_ids[0]  # NOTE: swap to a public subnet if builder_public = true
   vpc_cidr          = var.vpc_cidr

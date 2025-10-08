@@ -45,7 +45,7 @@ session-manager-plugin
 aws configure
 
 # Or use named profile
-aws configure --profile dev-brandon-leal
+aws configure --profile dev-your-name
 
 # Verify access
 aws sts get-caller-identity
@@ -150,9 +150,9 @@ aws ssm start-session \
 **Keep this terminal open**. Connect with SSMS or any SQL client:
 
 ```
-Server: localhost,11433
+Server: localhost,1433
 Authentication: SQL Server Authentication
-Username: sa
+Username: sqladmin
 Password: [Get from Parameter Store - see below]
 ```
 
@@ -190,82 +190,21 @@ aws rds describe-db-instances `
   --output text
 ```
 
-Or find in Terraform outputs:
-
-```bash
-terraform output rds_custom_endpoint
-```
-
 ### Connection String Examples
 
 **ADO.NET**:
 ```
-Server=localhost,11433;Database=YourDB;User Id=sa;Password=<password>;TrustServerCertificate=True;
+Server=localhost,1433;Database=YourDB;User Id=sa;Password=<password>;TrustServerCertificate=True;
 ```
 
 **JDBC**:
 ```
-jdbc:sqlserver://localhost:11433;databaseName=YourDB;user=sa;password=<password>;trustServerCertificate=true;
+jdbc:sqlserver://localhost:1433;databaseName=YourDB;user=sa;password=<password>;trustServerCertificate=true;
 ```
 
 **ODBC**:
 ```
-Driver={ODBC Driver 17 for SQL Server};Server=localhost,11433;Database=YourDB;Uid=sa;Pwd=<password>;TrustServerCertificate=yes;
-```
-
-## Retrieving Credentials
-
-All sensitive credentials are stored in **AWS Systems Manager Parameter Store**.
-
-### List All Parameters
-
-```bash
-aws ssm get-parameters-by-path \
-  --path /dev/legacy-webapp/ \
-  --recursive \
-  --query 'Parameters[*].[Name]' \
-  --output table
-```
-
-### Get Specific Parameter
-
-```bash
-# EC2 Administrator password
-aws ssm get-parameter \
-  --name /dev/legacy-webapp/ec2/admin-password \
-  --with-decryption \
-  --query 'Parameter.Value' \
-  --output text
-
-# RDS SA password
-aws ssm get-parameter \
-  --name /dev/legacy-webapp/rds/sa-password \
-  --with-decryption \
-  --query 'Parameter.Value' \
-  --output text
-```
-
-## Common Development Tasks
-
-### Deploy Application to EC2
-
-1. RDP to EC2 or use SSM session
-2. Application files can be:
-   - Downloaded from S3
-   - Uploaded via RDP clipboard share
-   - Pulled from Git repository
-
-Example using S3:
-
-```powershell
-# From EC2 PowerShell
-Read-S3Object `
-  -BucketName dev-sqlserver-supportfiles-backups-and-iso-files `
-  -Key "applications/my-app.zip" `
-  -File "C:\Temp\my-app.zip"
-
-# Extract
-Expand-Archive -Path "C:\Temp\my-app.zip" -DestinationPath "C:\Apps\my-app"
+Driver={ODBC Driver 17 for SQL Server};Server=localhost,1433;Database=YourDB;Uid=sa;Pwd=<password>;TrustServerCertificate=yes;
 ```
 
 ### Restore Database Backup
@@ -312,31 +251,9 @@ aws rds stop-db-instance \
   --db-instance-identifier dev-legacy-webapp-rds-custom
 ```
 
-**Note**: Starting RDS Custom can take 5-10 minutes.
-
-## Development Workflow
-
-### Typical Daily Workflow
-
-1. **Morning** (6 AM MST / 1 PM UTC):
-   - RDS Custom auto-starts via scheduler
-   - Wait 5-10 minutes for SQL Server to be ready
-
-2. **Connect**:
-   - Start port forward: `aws ssm start-session ...`
-   - Connect SSMS to `localhost,11433`
-   - Or RDP to EC2 if GUI work needed
-
-3. **Develop**:
-   - Write/test application code
-   - Run database migrations
-   - Test queries in SSMS
-
-4. **Evening** (1 AM MST / 8 AM UTC):
-   - RDS Custom auto-stops via scheduler
-   - Ensure all work is committed/backed up
-
 ### Working Outside Scheduled Hours
+
+**Note**: Starting RDS Custom can take 5-10 minutes.
 
 If you need RDS Custom outside scheduled hours:
 
@@ -382,24 +299,6 @@ aws rds stop-db-instance \
 3. Try increasing `localPortNumber` (avoid reserved ports)
 4. Verify Session Manager plugin is up to date
 
-### SSMS Can't Connect to localhost,11433
-
-**Solutions**:
-1. Verify port forward is active (check terminal window)
-2. Ensure RDS Custom is started: `aws rds describe-db-instances`
-3. Check credentials from Parameter Store
-4. Try using `127.0.0.1,11433` instead of `localhost,11433`
-5. Verify SQL Server service is running (may take 5-10 min after RDS start)
-
-### RDS Custom Won't Start
-
-**Solutions**:
-1. Check scheduler disabled it: Review EventBridge rules
-2. Verify CEV status: `aws rds describe-db-engine-versions --engine custom-sqlserver-dev`
-3. Check CloudWatch logs for errors: `/aws/rds/instance/dev-legacy-webapp-rds-custom/`
-4. Ensure IAM roles have correct permissions
-5. Contact AWS support if instance shows `incompatible-parameters`
-
 ### Can't Retrieve Parameter Store Values
 
 **Error**: `AccessDeniedException`
@@ -409,30 +308,6 @@ aws rds stop-db-instance \
 2. Add `--region us-east-2` if using different default region
 3. Check parameter name is exact (case-sensitive)
 4. Ensure KMS key (if encrypted) grants decrypt permissions
-
-## Best Practices
-
-### Security
-
-1. **Never hardcode credentials** - always use Parameter Store
-2. **Use named AWS profiles** for different environments
-3. **Close port forwards** when not in use
-4. **Lock Windows EC2** when stepping away (RDP session)
-5. **Rotate passwords** periodically (update Parameter Store)
-
-### Cost Optimization
-
-1. **Stop RDS Custom** when not needed (outside work hours)
-2. **Use scheduler** - don't override unless necessary
-3. **Monitor costs** via AWS Cost Explorer
-4. **Clean up test databases** to reduce storage costs
-
-### Performance
-
-1. **Test queries** in SSMS before deploying to production
-2. **Monitor RDS CloudWatch metrics** for resource usage
-3. **Index tuning** - use Database Engine Tuning Advisor on EC2
-4. **Backup strategy** - use RDS Custom automated backups
 
 ## Quick Reference
 
@@ -470,16 +345,3 @@ aws ssm get-parameter \
   --query 'Parameter.Value' \
   --output text
 ```
-
-## Support
-
-For infrastructure issues:
-- Check CloudWatch Logs
-- Review Terraform state
-- Consult main [README.md](README.md)
-
-For application issues:
-- Contact development team
-- Check application logs on EC2 (Event Viewer, IIS logs, etc.)
-
-

@@ -1,3 +1,8 @@
+# For the Next Poor Soul
+If you have to work on this please follow this guide as closely as possible. Change as little code as possible. Every choice was made because of very strict reasons.
+See AWS CU supported versions, Required endpoints, SSM config, and Custom RDS set up guide closely before attempting this process.
+This is for a single AZ setup. If you want Multi-AZ please add the SQS endpoint.
+
 # Legacy WebApp - DEV Infrastructure
 
 Complete Terraform infrastructure for DEV environment with Windows Server 2022 EC2 (SQL tooling only) and RDS Custom for SQL Server Developer Edition.
@@ -169,7 +174,7 @@ enable_rds_custom = false  # Set to true after CEV registration
 enable_scheduler  = true
 
 # SSM Access
-ssm_allowed_iam_usernames = ["dev-brandon-leal"]
+ssm_allowed_iam_usernames = ["dev-your-name"]
 ```
 
 ### Backend Configuration (backend.hcl)

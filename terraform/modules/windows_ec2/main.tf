@@ -165,6 +165,16 @@ resource "time_sleep" "wait_for_instance" {
   create_duration = "30s"
 }
 
+resource "aws_security_group_rule" "rds_from_ec2" {
+  type                     = "ingress"
+  from_port                = 1433
+  to_port                  = 1433
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.ec2.id
+  security_group_id        = var.rds_security_group_id  # You'll need to add this variable
+  description              = "Allow MSSQL from Windows bastion"
+}
+
 # Assign secondary IPs using AWS CLI (null_resource)
 resource "null_resource" "assign_secondary_ips" {
   depends_on = [time_sleep.wait_for_instance]
