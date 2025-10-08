@@ -13,7 +13,7 @@ This repo builds a **Custom Engine Version (CEV)** for **RDS Custom for SQL Serv
 1. **Pick LI AMI** for the edition you want (Web/Standard/Enterprise) on **WS2019** using SSM Parameter Store.
 2. `terraform apply -var-file=terraform/ami-builder.tfvars` to launch the **builder**.
 3. Run `bash scripts/sysprep_and_ami.sh` → preflights SSM → Sysprep → AMI → prints **AMI ID**.
-4. Run `bash scripts/create-cev.sh` to create the **CEV** from that AMI (engine must match edition; e.g. `custom-sqlserver-web` | `custom-sqlserver-se` | `custom-sqlserver-ee`).
+4. Run `bash scripts/create-cev.sh` to create the **CEV** from that AMI (engine must match edition; e.g. `custom-sqlserver-dev` | `custom-sqlserver-se` | `custom-sqlserver-ee`).
 5. Point Terraform for your DB to that **CEV** and apply.
 6. Destroy the builder when done.
 
@@ -142,7 +142,7 @@ bash create-cev.sh
 ```
 - Use a supported SQL 2022 build; we default to **CU19** in examples: `16.00.4195.2.dev-cev-YYYYMMDD`.
 - **Engine must match edition** of the AMI:
-  - Web → `custom-sqlserver-web`
+  - Web → `custom-sqlserver-dev`
   - Standard → `custom-sqlserver-se`
   - Enterprise → `custom-sqlserver-ee`
 
@@ -150,7 +150,7 @@ bash create-cev.sh
 
 | Edition    | Engine                 |
 |------------|------------------------|
-| Web        | custom-sqlserver-web   |
+| Web        | custom-sqlserver-dev   |
 | Standard   | custom-sqlserver-se    |
 | Enterprise | custom-sqlserver-ee    |
 
@@ -159,7 +159,7 @@ bash create-cev.sh
 ### 5) Deploy RDS Custom from the CEV
 In your RDS module variables (or resource):
 ```
-engine         = "custom-sqlserver-web"   # or custom-sqlserver-se / custom-sqlserver-ee
+engine         = "custom-sqlserver-dev"   # or custom-sqlserver-se / custom-sqlserver-ee
 engine_version = "16.00.4195.2.dev-cev-YYYYMMDD"
 ```
 Then apply your infra as usual.
@@ -208,7 +208,7 @@ The script:
   - Ensure DB subnets can reach: `logs`, `monitoring`, `events`, `secretsmanager` and S3 (Gateway) in addition to the three SSM services.
 
 - **Invalid DB engine**
-  - Engine must match the AMI’s SQL edition: Web → `custom-sqlserver-web`, Standard → `custom-sqlserver-se`, Enterprise → `custom-sqlserver-ee`.
+  - Engine must match the AMI’s SQL edition: Web → `custom-sqlserver-dev`, Standard → `custom-sqlserver-se`, Enterprise → `custom-sqlserver-ee`.
 
 - **`incompatible-network` during DB create**
   - Missing VPCEs/NAT, SG/NACL blocks, or no free IPs in DB subnets. Fix endpoints and 443 egress.
@@ -225,7 +225,7 @@ aws ec2 describe-images --owners self \
 
 # Check a specific CEV
 aws rds describe-db-engine-versions \
-  --engine custom-sqlserver-we \
+  --engine custom-sqlserver-dev \
   --engine-version "16.00.4195.2.dev-cev-YYYYMMDD" \
   --region us-east-2
 ```

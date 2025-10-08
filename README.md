@@ -50,7 +50,7 @@ aws s3 cp SQLServer2022-x64-ENU-Dev.iso \
   s3://dev-sqlserver-supportfiles-backups-and-iso-files/media/
 
 # Upload Cumulative Update
-aws s3 cp sqlserver2022-kb5041321-x64_1b40129fb51df67f28feb2a1ea139044c611b93f.exe \
+aws s3 cp sqlserver2022-kb5054531-x64_1f9436d6f4ae16354819cab42a6aef9292f1fc06.exe \
   s3://dev-sqlserver-supportfiles-backups-and-iso-files/media/
 ```
 
@@ -123,11 +123,11 @@ terraform apply -var-file=envs/dev/dev.tfvars
 1. Confirm your **Custom Engine Version** exists and note the exact engine **identifier** your CEV was registered under:
    ```bash
    aws rds describe-db-engine-versions \
-     --engine custom-sqlserver-we \
+     --engine custom-sqlserver-dev \
      --query 'DBEngineVersions[].{Engine:Engine,Version:EngineVersion,Status:Status}' \
      --region us-east-2
    ```
-   > If you used `custom-sqlserver-dev` instead of `custom-sqlserver-we`, keep that exact string consistent between the CEV and your Terraform `aws_db_instance.engine`.
+   > If you used `custom-sqlserver-dev` instead of `custom-sqlserver-dev`, keep that exact string consistent between the CEV and your Terraform `aws_db_instance.engine`.
 
 2. Flip the flag in `envs/dev/dev.tfvars`:
    ```hcl
@@ -370,7 +370,7 @@ Ensure:
 
 ### RDS Custom Won't Start
 
-1. Check CEV status: `aws rds describe-db-engine-versions --engine custom-sqlserver-we`
+1. Check CEV status: `aws rds describe-db-engine-versions --engine custom-sqlserver-dev`
 2. Verify S3 media bucket is accessible
 3. Check CloudWatch logs for SQL Server service errors
 4. Ensure NT AUTHORITY\SYSTEM has sysadmin role

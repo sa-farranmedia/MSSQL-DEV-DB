@@ -41,21 +41,44 @@ resource "aws_security_group" "rds_custom" {
     cidr_blocks = [var.vpc_cidr]
   }
 
-  egress {
-    description = "HTTPS to AWS services"
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-    egress {
-    description = "IMDSv2 token fetch"
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["169.254.169.254/32"]
-  }
+egress {
+  description = "DNS to VPC resolver(s)"
+  from_port   = 53
+  to_port     = 53
+  protocol    = "udp"
+  cidr_blocks = [var.vpc_cidr]
+}
+egress {
+  description = "DNS TCP fallback"
+  from_port   = 53
+  to_port     = 53
+  protocol    = "tcp"
+  cidr_blocks = [var.vpc_cidr]
+}
+# time sync (Amazon Time Sync Service)
+egress {
+  description = "NTP"
+  from_port   = 123
+  to_port     = 123
+  protocol    = "udp"
+  cidr_blocks = ["169.254.169.123/32"]
+}
+# SSM/PrivateLink
+egress {
+  description = "HTTPS to AWS services"
+  from_port   = 443
+  to_port     = 443
+  protocol    = "tcp"
+  cidr_blocks = ["0.0.0.0/0"]
+}
+# IMDSv2 (token fetch)
+egress {
+  description = "IMDSv2 token fetch"
+  from_port   = 80
+  to_port     = 80
+  protocol    = "tcp"
+  cidr_blocks = ["169.254.169.254/32"]
+}
 
   tags = merge(var.tags, {
     Name = "${var.env}-${var.project_name}-rds-sg"

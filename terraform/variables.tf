@@ -97,7 +97,7 @@ variable "sql_iso_key" {
 variable "sql_cu_key" {
   description = "S3 key for SQL Server Cumulative Update"
   type        = string
-  default     = "media/sqlserver2022-kb5041321-x64_1b40129fb51df67f28feb2a1ea139044c611b93f.exe"
+  default     = "media/sqlserver2022-kb5054531-x64_1f9436d6f4ae16354819cab42a6aef9292f1fc06.exe"
 }
 
 variable "rds_instance_class" {

@@ -22,14 +22,14 @@ static_ips = [
 # IMPORTANT: Set enable_rds_custom to true AFTER CEV is registered
 enable_rds_custom = true
 enable_scheduler  = true
-dev_cev_version = "16.00.4195.2.dev-cev-20251006"
+dev_cev_version = "16.00.4195.2.dev-cev-20251007"
 # SSM Access Control
 ssm_allowed_iam_usernames = ["dev-brandon-leal","dev-nick-avaneas","dev-brandon-jerrell"]
 
 # S3 Media Bucket
 s3_media_bucket = "dev-sqlserver-supportfiles-backups-and-iso-files"
 sql_iso_key     = "media/SQLServer2022-x64-ENU-Dev.iso"
-sql_cu_key      = "media/sqlserver2022-kb5041321-x64_1b40129fb51df67f28feb2a1ea139044c611b93f.exe"
+sql_cu_key      = "media/sqlserver2022-kb5054531-x64_1f9436d6f4ae16354819cab42a6aef9292f1fc06.exe"
 
 custom_rds_username = "sqladmin"
 

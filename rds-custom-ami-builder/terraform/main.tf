@@ -13,20 +13,9 @@ provider "aws" {
   region = var.region
 }
 
-# Data: Windows Server 2019 + SQL Server 2022 Web (License-Included) AMI
-data "aws_ami" "windows_2019" {
-  most_recent = true
-  owners      = ["amazon"]
-
-  filter {
-    name   = "name"
-    values = [var.filter]
-  }
-
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
+# FIXED: Get AMI ID directly from SSM Parameter Store (more reliable)
+data "aws_ssm_parameter" "windows_sql_ami" {
+  name = var.base_ami_ssm_param
 }
 
 # Security Group for Builder Instance
@@ -103,15 +92,14 @@ resource "aws_iam_instance_profile" "builder" {
   }
 }
 
-# Builder EC2 Instance
+# Builder EC2 Instance - Using SSM parameter for AMI
 resource "aws_instance" "builder" {
-  ami                    = data.aws_ami.windows_2019.id
-  instance_type          = "m5.xlarge"
-  subnet_id              = data.aws_subnets.default.ids[0]
-  vpc_security_group_ids = [aws_security_group.builder.id]
-  iam_instance_profile   = aws_iam_instance_profile.builder.name
-  key_name = var.key_name
-  # No public IP needed with SSM
+  ami                         = data.aws_ssm_parameter.windows_sql_ami.value
+  instance_type               = "m5.xlarge"
+  subnet_id                   = data.aws_subnets.default.ids[0]
+  vpc_security_group_ids      = [aws_security_group.builder.id]
+  iam_instance_profile        = aws_iam_instance_profile.builder.name
+  key_name                    = var.key_name
   associate_public_ip_address = var.builder_public
 
   # Larger root volume for SQL Server
@@ -122,7 +110,6 @@ resource "aws_instance" "builder" {
     delete_on_termination = true
   }
 
-
   tags = {
     Name    = "${var.env}-${var.project_name}-ami-builder"
     env     = var.env
@@ -131,19 +118,21 @@ resource "aws_instance" "builder" {
   }
 }
 
-# Optional: SSM Interface VPC Endpoints for private builds (toggle with var.create_ssm_endpoints)
+# Optional: SSM Interface VPC Endpoints for private builds
 resource "aws_security_group" "vpce_ssm" {
   count       = var.create_ssm_endpoints ? 1 : 0
   name        = "${var.env}-${var.project_name}-vpce-ssm-sg"
   description = "VPCE SG for SSM endpoints (allow 443 from builder SG)"
   vpc_id      = data.aws_vpc.default.id
+
   ingress {
     description = "HTTPS from VPC CIDR"
     from_port   = 443
     to_port     = 443
     protocol    = "tcp"
-    cidr_blocks = [data.aws_vpc.default.cidr_block]  # allow HTTPS from the VPC CIDR
+    cidr_blocks = [data.aws_vpc.default.cidr_block]
   }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -158,14 +147,14 @@ resource "aws_security_group" "vpce_ssm" {
   }
 }
 
-# Allow HTTPS from builder SG to the VPCE SG (provider v5 pattern)
+# Allow HTTPS from builder SG to the VPCE SG
 resource "aws_vpc_security_group_ingress_rule" "vpce_https_from_builder" {
-  count                         = var.create_ssm_endpoints ? 1 : 0
-  security_group_id             = aws_security_group.vpce_ssm[0].id
-  ip_protocol                   = "tcp"
-  from_port                     = 443
-  to_port                       = 443
-  referenced_security_group_id  = aws_security_group.builder.id
+  count                        = var.create_ssm_endpoints ? 1 : 0
+  security_group_id            = aws_security_group.vpce_ssm[0].id
+  ip_protocol                  = "tcp"
+  from_port                    = 443
+  to_port                      = 443
+  referenced_security_group_id = aws_security_group.builder.id
 }
 
 locals {
@@ -192,7 +181,7 @@ resource "aws_vpc_endpoint" "ssm" {
   }
 }
 
-# CloudWatch Log Group for UserData logs
+# CloudWatch Log Group for logs
 resource "aws_cloudwatch_log_group" "builder" {
   name              = "/aws/ec2/${var.env}-${var.project_name}-ami-builder"
   retention_in_days = 7
@@ -203,12 +192,49 @@ resource "aws_cloudwatch_log_group" "builder" {
     project = var.project_name
   }
 }
+# IAM Policy for S3 access to SQL Server media
+resource "aws_iam_role_policy" "builder_s3_access" {
+  name = "${var.env}-${var.project_name}-ami-builder-s3-policy"
+  role = aws_iam_role.builder.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::dev-sqlserver-supportfiles-backups-and-iso-files",
+          "arn:aws:s3:::dev-sqlserver-supportfiles-backups-and-iso-files/*"
+        ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject"
+        ]
+        Resource = [
+          "arn:aws:s3:::dev-sqlserver-supportfiles-backups-and-iso-files/logs/*"
+        ]
+      }
+    ]
+  })
+}
 
 output "builder_instance_id" {
-  value = aws_instance.builder.id
+  value       = aws_instance.builder.id
+  description = "EC2 Instance ID for the AMI builder"
 }
 
 output "builder_public_ip" {
   value       = aws_instance.builder.public_ip
-  description = "Public IP present only when var.builder_public = true"
+  description = "Public IP (only present when builder_public = true)"
+}
+
+output "ami_name" {
+  value       = data.aws_ssm_parameter.windows_sql_ami.name
+  description = "SSM parameter name for the AMI"
 }

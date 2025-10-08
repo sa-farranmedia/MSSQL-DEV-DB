@@ -144,7 +144,7 @@ INSTANCE_ID=$(aws ec2 describe-instances \
 aws ssm start-session \
   --target $INSTANCE_ID \
   --document-name AWS-StartPortForwardingSessionToRemoteHost \
-  --parameters "{\"host\":[\"$RDS_ENDPOINT\"],\"portNumber\":[\"1433\"],\"localPortNumber\":[\"11433\"]}"
+  --parameters "{\"host\":[\"$RDS_ENDPOINT\"],\"portNumber\":[\"1433\"],\"localPortNumber\":[\"1433\"]}"
 ```
 
 **Keep this terminal open**. Connect with SSMS or any SQL client:
@@ -395,7 +395,7 @@ aws rds stop-db-instance \
 
 **Solutions**:
 1. Check scheduler disabled it: Review EventBridge rules
-2. Verify CEV status: `aws rds describe-db-engine-versions --engine custom-sqlserver-we`
+2. Verify CEV status: `aws rds describe-db-engine-versions --engine custom-sqlserver-dev`
 3. Check CloudWatch logs for errors: `/aws/rds/instance/dev-legacy-webapp-rds-custom/`
 4. Ensure IAM roles have correct permissions
 5. Contact AWS support if instance shows `incompatible-parameters`
