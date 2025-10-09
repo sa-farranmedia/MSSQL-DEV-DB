@@ -88,18 +88,6 @@ variable "s3_media_bucket" {
   default     = "dev-sqlserver-supportfiles-backups-and-iso-files"
 }
 
-variable "sql_iso_key" {
-  description = "S3 key for SQL Server ISO"
-  type        = string
-  default     = "media/SQLServer2022-x64-ENU-Dev.iso"
-}
-
-variable "sql_cu_key" {
-  description = "S3 key for SQL Server Cumulative Update"
-  type        = string
-  default     = "media/sqlserver2022-kb5054531-x64_1f9436d6f4ae16354819cab42a6aef9292f1fc06.exe"
-}
-
 variable "rds_instance_class" {
   description = "RDS Custom instance class"
   type        = string
@@ -123,3 +111,7 @@ variable "dev_cev_version" {
   description = "From the custom AMI build process"
 }
 
+variable "key_name" {
+  type        = string
+  description = "ec2 key"
+}

@@ -60,4 +60,7 @@ variable "rds_security_group_id" {
   type        = string
 }
 
-
+variable "key_name" {
+  description = "EC2 Key Pair name for password decryption"
+  type        = string
+}

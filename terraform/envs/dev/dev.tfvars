@@ -28,11 +28,11 @@ ssm_allowed_iam_usernames = ["dev-brandon-leal","dev-nick-avaneas","dev-brandon-
 
 # S3 Media Bucket
 s3_media_bucket = "dev-sqlserver-supportfiles-backups-and-iso-files"
-sql_iso_key     = "media/SQLServer2022-x64-ENU-Dev.iso"
-sql_cu_key      = "media/sqlserver2022-kb5054531-x64_1f9436d6f4ae16354819cab42a6aef9292f1fc06.exe"
+# sql_iso_key     = "media/SQLServer2022-x64-ENU-Dev.iso"
+# sql_cu_key      = "media/sqlserver2022-kb5054531-x64_1f9436d6f4ae16354819cab42a6aef9292f1fc06.exe"
 
 custom_rds_username = "sqladmin"
-
+key_name="legacy_ec2"
 # RDS Instance Configuration
 rds_instance_class    = "db.m5.xlarge"
 rds_allocated_storage = 900

@@ -12,7 +12,7 @@ create_ssm_endpoints = true
 
 # Keygen
 # REGION=us-east-2
-# KEY_NAME=brand-east2
+# KEY_NAME=legacy_ec2
 # aws ec2 create-key-pair --region "$REGION" --key-name "$KEY_NAME" \
 #   --query 'KeyMaterial' --output text > ~/.ssh/${KEY_NAME}.pem
 # chmod 600 ~/.ssh/${KEY_NAME}.pem

@@ -124,6 +124,7 @@ resource "aws_instance" "windows" {
   vpc_security_group_ids = [aws_security_group.ec2.id]
   iam_instance_profile   = aws_iam_instance_profile.ec2.name
   private_ip             = var.primary_private_ip
+  key_name               = var.key_name
 
   # No public IP
   associate_public_ip_address = false
@@ -173,6 +174,24 @@ resource "aws_security_group_rule" "rds_from_ec2" {
   source_security_group_id = aws_security_group.ec2.id
   security_group_id        = var.rds_security_group_id  # You'll need to add this variable
   description              = "Allow MSSQL from Windows bastion"
+}
+
+resource "aws_security_group_rule" "rdp_ingress" {
+  type              = "ingress"
+  from_port         = 3389
+  to_port           = 3389
+  protocol          = "tcp"
+  security_group_id = aws_security_group.ec2.id
+  description       = "Allow RDP access"
+
+  # Option 1: From VPC CIDR (most secure for private instance)
+  cidr_blocks = [var.vpc_cidr]
+
+  # Option 2: From specific IP (if you have a bastion/VPN)
+  # cidr_blocks = ["10.0.1.5/32"]
+
+  # Option 3: From anywhere (NOT recommended - only for testing with public IP)
+  # cidr_blocks = ["0.0.0.0/0"]
 }
 
 # Assign secondary IPs using AWS CLI (null_resource)

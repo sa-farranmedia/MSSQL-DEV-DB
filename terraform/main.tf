@@ -20,6 +20,7 @@ module "vpc" {
 module "windows_ec2" {
   source = "./modules/windows_ec2"
 
+  key_name = var.key_name
   project_name = var.project_name
   env          = var.env
   region       = var.region
